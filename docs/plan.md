@@ -42,7 +42,7 @@ Two consequences worth recording now:
   are flagged `is_national_account`, and per the ownership rule above they would be owned
   by head office or a regional accounts manager. The schema has no way to express that:
   they still carry an ordinary `home_branch_id`, and there is no head-office branch or
-  large-accounts-manager field. Flagged for datagenerator2 (§7.7); not blocking.
+  large-accounts-manager field. Flagged for datagenerator2 (§7.8); not blocking.
 
 ---
 
@@ -424,36 +424,222 @@ upstream shape ends up differing from §7.1, the change is confined to one query
 
 ---
 
-### 7.7 Role × user × branch matrix (and national-account ownership)
+### 7.7 Permissions: user × branch × permission
 
-Two gaps in how the dataset models staff and ownership. Neither blocks current work; both
-change what the components can do honestly.
+Agreed 2026-08-01 from the permission matrix. Lands in datagenerator2 per decision #6.
+This is the design the sign-in payload and every staff component are built against.
 
-**Multi-branch access.** Every one of the 175 `app_user` rows carries exactly one
-`default_branch_id`, and there is no user→branch access table. A sales desk rep covering
-Liverpool and Manchester cannot be expressed. Until it exists, `working-branch` takes an
-`allowedCodes` array from the host, which is a **display filter, not authorisation** — it
-arrives from the browser. Proposed shape, following `NAMING.md`:
+#### The distinction that shapes it
 
-| Table | Columns |
-|---|---|
-| `app_user_branch` | `id`, `app_user_id`, `branch_id`, `app_role_id` (nullable — role may vary by branch), `is_default` |
+`app_role` holds **job functions** — Sales, Counter, Purchasing and stock, Manager. The
+matrix holds **permissions** — `sales_enquiries`, `goods_inward`, `raise_ibt`. These are
+different kinds of thing and must not be merged into one table: a person's job title and
+the specific privileges they hold vary independently, and the matrix already shows it —
+user 1 holds the full set at branch 1 but only `sales_enquiries` at branches 2–4.
 
-Unique on `(app_user_id, branch_id)`. `is_default` then supersedes
-`app_user.default_branch_id`, or that column stays as the fast path and this table lists
-the rest. Realistic generation: Counter staff at one branch, Sales at two or three within
-a region, Managers at one, area/regional roles across a whole region.
+#### Tables
 
-When it lands, `listBranchesForUser()` in `server/queries/branches.js` joins to it and
-`allowedCodes` stops being load-bearing. That function is the single seam — no component
-changes.
+```sql
+-- The catalogue. Adding a permission is an INSERT, never a schema change.
+CREATE TABLE permission (
+  id            INTEGER PRIMARY KEY,   -- sparse and grouped: 1–8 sales, 51–56 stock, 90–91 works orders
+  code          TEXT NOT NULL UNIQUE,  -- sales_enquiries
+  name          TEXT NOT NULL,
+  description   TEXT,                  -- the "notes" column of the matrix
+  category      TEXT NOT NULL,         -- sales | pricing | credit | purchasing | stock | works_order
+  scope         TEXT NOT NULL,         -- working_branch | any_permitted_branch | global
+  is_limited    INTEGER NOT NULL,      -- whether an approval threshold applies to this permission
+  sort          INTEGER
+);
 
-**National-account ownership.** See §0: 52 customers are `is_national_account` but the
-schema can only express branch ownership. Options are a nullable
-`customer.owning_sales_rep_id`, a head-office pseudo-branch, or an explicit
-`customer.ownership_type` enum (`branch` / `regional` / `head_office`). Worth deciding
-before credit-status renders "owned by", because that component states who holds the
-credit relationship.
+-- Which branches a user works at, and in what job function at each.
+-- Supersedes the thinner app_user_branch previously sketched here.
+CREATE TABLE app_user_branch (
+  id            INTEGER PRIMARY KEY,
+  app_user_id   INTEGER NOT NULL,
+  branch_id     INTEGER NOT NULL,
+  app_role_id   INTEGER NOT NULL,      -- role may differ per branch
+  is_default    INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX ux_app_user_branch ON app_user_branch(app_user_id, branch_id);
+
+-- The grants. One row per permission the user actually holds at that branch.
+CREATE TABLE app_user_permission (
+  id                   INTEGER PRIMARY KEY,
+  app_user_id          INTEGER NOT NULL,
+  branch_id            INTEGER NOT NULL,
+  permission_id        INTEGER NOT NULL,
+  approval_limit_pence INTEGER   -- NULL = no value threshold, never routes for approval
+);
+CREATE UNIQUE INDEX ux_app_user_permission
+  ON app_user_permission(app_user_id, branch_id, permission_id);
+CREATE INDEX ix_app_user_permission_branch
+  ON app_user_permission(branch_id, permission_id);
+```
+
+#### What the matrix's two columns mean
+
+**Y/N is granted / not granted.** `raise_purchase_order` = `Y` means the user may raise
+purchase orders. `raise_purchase_order_any_supplier` = `N` means they may not — so they can
+only order from the product's default supplier.
+
+**The limit is an auto-approval threshold on a granted permission**, not a hard ceiling.
+`raise_purchase_order` `Y` with 1500 means: raise it freely up to £1500 ex-VAT; above that
+the PO is routed to the branch manager for approval. The action is never simply refused.
+
+**A limit on an `N` row is meaningless and must be ignored** — those are leftover template
+values in the spreadsheet. `raise_purchase_order_any_supplier` `N` with 100 is not "may
+order from any supplier up to £100"; it is "may not order from any supplier", full stop.
+Generation must not carry those numbers across.
+
+Consequences for the schema:
+
+- **Absence of a row means not granted.** Only granted permissions are stored, so `N` cells
+  produce no row at all. With no role-level inheritance to override (see below), an
+  explicit denial and an absence are indistinguishable in effect, so there is no
+  `is_granted` column to carry.
+- **`approval_limit_pence` is NULL for permissions with no threshold** — `override_selling_prices`
+  is granted with no value limit because its constraint is the margin band, not a value.
+  NULL means "never routes", not "always routes".
+- **The boundary is exclusive**: value > limit routes for approval; value ≤ limit proceeds.
+- **Money follows rule 6** — integer pence, so the matrix's `1500` is `150000`, ex-VAT.
+
+Applying this to the sample row, user 1 at branch 1 is granted `sales_enquiries`,
+`sales_counter` (£500), `sales_desk` (£1000), `override_selling_prices`,
+`raise_credit_note` (£250), `raise_purchase_order` (£1500), `goods_inward`, `stock_take`
+and `raise_sales_works_order` — nine rows, not fifteen.
+
+#### No role_permission table (decided)
+
+Permissions are held per user, not defaulted from the role. The administrative burden of
+setting ~15 permissions per new starter is handled in the UI by **copy profile from
+another user**, not in the schema.
+
+The trade-off, recorded so it is a known cost rather than a surprise: a copy is a
+*snapshot*. A policy change — "all counter staff go to £750" — means editing every
+affected user, where role defaults would be one edit. If that becomes painful, add
+`role_permission` purely as a **template source**, so the admin UI can offer "copy from
+role" alongside "copy from user". Grants stay per-user either way, so this can be added
+later without touching existing data.
+
+#### Approval routing
+
+Over-limit requests go to **the branch manager** — the data supports this directly, with
+exactly 28 Managers for 28 branches. The routing query is the one that argues hardest
+against storing grants as JSON:
+
+```sql
+-- Who can approve permission :p at branch :b for an ex-VAT value of :v pence?
+-- The approver must hold the permission themselves and have the headroom for it.
+SELECT u.id, u.given_name, u.surname
+  FROM app_user_branch ub
+  JOIN app_role r  ON r.id = ub.app_role_id
+  JOIN app_user u  ON u.id = ub.app_user_id
+  JOIN app_user_permission p
+    ON p.app_user_id = u.id AND p.branch_id = ub.branch_id
+ WHERE ub.branch_id = :b
+   AND r.role = 'Manager'
+   AND p.permission_id = :p
+   AND (p.approval_limit_pence IS NULL OR p.approval_limit_pence >= :v);
+```
+
+A join against indexed columns relationally; a full scan with JSON extraction otherwise.
+
+#### On JSON
+
+**Not for the catalogue or the grants.** A lookup table is already zero-schema-change to
+extend — a new permission is an `INSERT`. JSON would add nothing there while costing FK
+integrity, indexes, and the routing query above.
+
+**Reasonable for sparse per-permission parameters**: a `constraints` JSON column on
+`app_user_permission` for things that only apply to some permissions —
+`max_margin_pct` for price override, `supplier_ids` for restricted POs. That matches the
+existing `user_defined` / `specification` columns. `approval_limit_pence` is universal enough to
+stay a typed column.
+
+#### Permission catalogue (seed)
+
+Codes normalised from the matrix — typos corrected, and the `can_` prefix dropped from 90
+and 91 since every permission is a "can". `is_limited` says whether an approval threshold
+is meaningful for that permission at all; the Y/N and limit columns are the *sample row*
+for user 1 at branch 1, not properties of the permission.
+
+| id | code | category | `is_limited` | sample: granted | sample limit |
+|---:|---|---|---|---|---:|
+| 1 | `sales_enquiries` | sales | no | yes | — |
+| 2 | `sales_counter` | sales | yes | yes | 500 |
+| 3 | `sales_desk` | sales | yes | yes | 1000 |
+| 4 | `override_selling_prices` | pricing | no | yes | — |
+| 6 | `override_selling_prices_any` | pricing | no | **no** | ignore |
+| 7 | `raise_credit_note` | credit | yes | yes | 250 |
+| 8 | `raise_cash_credit_note` | credit | yes | **no** | ignore |
+| 51 | `raise_purchase_order` | purchasing | yes | yes | 1500 |
+| 52 | `raise_purchase_order_any_supplier` | purchasing | no | **no** | ignore |
+| 53 | `goods_inward` | stock | no | yes | — |
+| 54 | `stock_take` | stock | no | yes | — |
+| 55 | `stock_adjustment` | stock | no | **no** | ignore |
+| 56 | `raise_ibt` | stock | no | **no** | ignore |
+| 90 | `raise_sales_works_order` | works_order | no | yes | — |
+| 91 | `raise_stock_works_order` | works_order | no | **no** | ignore |
+
+`52` is marked not-limited because it is a capability switch — you may or may not order
+from non-default suppliers — with the *value* threshold living on `51`. Same reasoning for
+`6` against `4`.
+
+#### Sign-in payload
+
+```jsonc
+{
+  "user":     { "id": 1, "name": "Robert Collins", "defaultBranchId": 1 },
+  "branches": [ { "id": 1, "code": "01", "name": "Chester", "role": "Manager" } ],
+  "permissions": {
+    "1": {                                    // keyed by branch id
+      "sales_enquiries":      {},             // held, no value threshold
+      "raise_purchase_order": { "approvalLimitPence": 150000 }
+    }
+  }
+}
+```
+
+A key present means the permission is held. `raise_purchase_order_any_supplier` is simply
+absent, so the UI offers only the default supplier. Where `approvalLimitPence` is present,
+the UI can warn *before* submission that the value will route for approval, rather than
+letting someone fill in a PO and discover it afterwards.
+
+Keyed by branch because that is how it varies. **The client uses this for affordances
+only** — greying out a button, showing a limit — and the server re-checks on every write.
+Same rule as `allowedCodes` on `working-branch`: anything the browser holds is display,
+not authorisation.
+
+When this lands, `listBranchesForUser()` in `server/queries/branches.js` joins
+`app_user_branch` and `allowedCodes` stops being load-bearing. That function is the single
+seam; no component changes.
+
+#### Open points
+
+- **Overlapping thresholds.** User 1 holds both `sales_counter` (£500) and `sales_desk`
+  (£1000). For a £750 counter sale, which applies? If the three `sales_*` permissions are
+  tiers — desk ⊃ counter ⊃ enquiries, which the notes suggest — the answer is "the highest
+  tier held", and they may be better modelled as one tiered value than three grants. If
+  they are genuinely independent, the evaluation rule needs stating.
+- **When the branch manager is the one over limit**, who approves? Regional, or a second
+  manager? There are 8 regions but no regional role in `app_role`.
+- **Permission id 5 is absent** from the matrix (1,2,3,4,6,7,8) — deliberate gap or
+  omission?
+- **`scope` per permission** is proposed because the matrix says "Working branch only" on
+  `sales_counter` and not on the others, implying it varies. Each permission needs its
+  scope assigned.
+
+Assumed unless corrected: thresholds are per document (a whole PO or sales order), ex-VAT,
+and an over-limit action is created in a pending-approval state rather than refused.
+
+### 7.8 National-account ownership
+
+See §0: 52 customers are `is_national_account` but the schema can only express branch
+ownership. Options are a nullable `customer.owning_sales_rep_id`, a head-office
+pseudo-branch, or an explicit `customer.ownership_type` enum (`branch` / `regional` /
+`head_office`). Worth deciding before credit-status renders "owned by", because that
+component states who holds the credit relationship.
 
 ## 8. Build order
 
