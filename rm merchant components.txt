@@ -1,0 +1,17 @@
+rm-merchant-components
+1. New project
+2. Using Bun (JS only), Lit, Tailwind CSS and SQLite
+2. Use datagenerator.db as data source
+3. A harness for development and testing of components 
+4. Simple page showing list of links to components. Each component then opens on new page for UI development, tuning and testing
+5. Each component has a versions number
+6. Starting components:
+ - Find customer
+ - Select delivery address for given customer
+ - Check credit status for given customer
+ - Select branch for customer
+ - Find product(s)
+ - Show details for product
+ - Stock check for product
+ - Multi branch stock availability
+ - Find supplier
