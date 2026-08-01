@@ -1,0 +1,38 @@
+/* src/styles/tailwind.entry.css — the one Tailwind build (docs/plan.md §5).
+ *
+ * Built by scripts/build-css.js into two artifacts from this single source:
+ *   src/styles/tailwind.css      light DOM, linked by the harness pages
+ *   src/styles/tailwind.css.js   shadow DOM, a CSSResult adopted by every component
+ *
+ * Automatic source detection is off: components are served from src/components and the
+ * harness from client/, neither of which Tailwind would find from this file's location.
+ */
+
+@import "tailwindcss" source(none);
+
+@source "../components/**/*.js";
+@source "../../client/**/*.{js,html}";
+
+/* Dark mode is driven by data-theme rather than a class, because the attribute has to be
+ * readable from inside a shadow root. The harness sets it on <html> for its own chrome
+ * and on the component element (the shadow host) for the component itself — hence the
+ * two selectors. `.dark *` would never match across the shadow boundary. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  &:where(:host([data-theme="dark"]), :host([data-theme="dark"]) *) {
+    @slot;
+  }
+}
+
+/* Host-overridable theming (docs/plan.md §5). A consuming application sets
+ * --merchant-accent / --merchant-radius / --merchant-font on the element or any ancestor;
+ * custom properties inherit through the shadow boundary, so these reach the component
+ * without piercing it. The values below are the fallback, not a ceiling. */
+@theme {
+  --color-accent: var(--merchant-accent, oklch(0.52 0.11 195));
+  --color-accent-soft: var(--merchant-accent-soft, oklch(0.96 0.02 195));
+  --radius-merchant: var(--merchant-radius, 0.5rem);
+  --font-merchant: var(--merchant-font, ui-sans-serif, system-ui, sans-serif);
+}

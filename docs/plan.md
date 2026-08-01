@@ -190,18 +190,23 @@ component has been used in a real host app.
 
 Shadow DOM blocks the document stylesheet, so:
 
-1. `scripts/build-css.js` runs `@tailwindcss/cli` over `client/styles/tailwind.entry.css`
-   with content globs covering `src/components/**/*.js` and `client/**/*.{js,html}`.
-2. The output is post-processed: `:root` selectors are rewritten to `:host, :root` so each
-   component carries its own theme variables and works standalone in a host page that
-   has never heard of Tailwind. (Custom properties *do* inherit through the shadow
-   boundary, so a host-provided theme still overrides — the built-in values are a floor,
-   not a ceiling.)
+1. `scripts/build-css.js` runs `@tailwindcss/cli` over `src/styles/tailwind.entry.css`
+   with `source(none)` plus explicit `@source` globs covering `src/components/**/*.js`
+   and `client/**/*.{js,html}` — automatic detection would find neither from that path.
+2. **Tailwind v4.3 already emits `:root, :host` for theme variables and `html, :host` for
+   preflight**, so the `:root` → `:host` rewrite this plan originally assumed turned out to
+   be unnecessary. `hostify()` remains as an idempotent guard: if a future version emits a
+   `:root`-only rule, theme variables would silently vanish inside every shadow root, and
+   that is a failure that reads very badly backwards from the symptom.
 3. The result is wrapped as `export const tw = unsafeCSS(...)` in
-   `client/styles/tailwind.css.js`, imported by `MerchantElement` and shared by every
+   `src/styles/tailwind.css.js`, imported by `MerchantElement` and shared by every
    component — one `CSSStyleSheet` object, parsed once, adopted many times.
-4. Preflight is scoped to the shadow root rather than `html`/`body`; the harness page
-   itself links the same built CSS normally for its own chrome.
+4. The harness pages link the plain CSS artifact for their own light-DOM chrome.
+
+**Dark mode uses `data-theme`, not a class.** A shadow root cannot see `.dark` on `<html>`,
+so `@custom-variant dark` matches both `[data-theme="dark"] *` (harness chrome) and
+`:host([data-theme="dark"]) *` (inside the component). The harness sets the attribute on
+`<html>` and on the component element, which is the shadow host.
 
 Scripts: `bun run css` (once) and `bun run css:watch` (dev). `bun run dev` runs
 `--hot` server + CSS watch together.
@@ -287,7 +292,9 @@ Optional, not required for these components: a `stock_movement` history table.
 
 ### 7.2 Indexes
 
-The shipped DB currently has **zero** indexes. Minimum set for this project:
+The shipped DB has **no explicit indexes**. (It has two implicit `sqlite_autoindex` entries
+from the `UNIQUE` constraints on `supplier.code` and `product.code`, so lookups by those two
+codes are already covered — everything else scans.) Minimum set for this project:
 
 ```
 aged_debt (customer_id, transaction_date)       -- MEASURED: see below
@@ -333,16 +340,20 @@ as "none" rather than `NULL`, which will need normalising before an FK can be ad
 The working pattern is: build a component here, find a slow query, add the index in
 `datagenerator2`, regenerate, come back. Two things make that loop cheap enough to stay in.
 
-**Measure before you flip.** `bun run explain <name>` runs a named query from
-`server/queries/` against a **scratch copy** of the DB, optionally applying candidate
-indexes first, and prints before/after timings and `EXPLAIN QUERY PLAN` — exactly the
-table above. The scratch copy means candidate indexes are tried in seconds without
-touching `datagenerator.db` or regenerating anything. Only proven indexes get promoted
-upstream, so a regeneration cycle is never spent on a guess.
+**Measure before you flip.** `bun run explain <name>` (or `--sql "…"`) runs a query against
+a **scratch copy** of the DB, optionally applying `--index` candidates first, and prints
+before/after timings and `EXPLAIN QUERY PLAN` — exactly the table above. The scratch copy
+means candidates are tried in seconds without touching `datagenerator.db` or regenerating
+anything, and it is deleted on exit. Only proven indexes get promoted upstream, so a
+regeneration cycle is never spent on a guess.
 
 **See it live.** The harness request log (§6) shows `tookMs` and the query plan for every
-API call, with a warning marker on any plan containing `SCAN` or `TEMP B-TREE`. A missing
-index announces itself while you are building the UI rather than in production.
+API call, with a warning marker on plans containing `SCAN` or `TEMP B-TREE`.
+
+That marker is gated on time (`MERCHANT_WARN_MS`, default 5 ms), which matters more than it
+sounds: `branches.list` scans and sorts in a temp B-tree, and at 28 rows / 0.3 ms it wants
+no index at all. Warning on the plan alone would fire on almost every query in the project
+and train us to ignore it. The plan is always shown; only the warning is conditional.
 
 Proven indexes are recorded in `docs/upstream-requests.md` with their measurements, so the
 datagenerator2 side is a copy-paste of `create index` statements into `src/db/schema.js`
@@ -380,10 +391,18 @@ upstream shape ends up differing from §7.1, the change is confined to one query
 
 Each phase ends with something runnable.
 
-**Phase 0 — Skeleton, proven by the branch picker.** `package.json` (deps: `hono`, `lit`;
-dev: `@tailwindcss/cli`), Hono server, readonly DB handle with path config, Tailwind build
-script, `MerchantElement` base, registry, harness index + component page shells — and
-**Select branch `v0.1.0`** as the vehicle that proves it end to end.
+**Phase 0 — Skeleton, proven by the branch picker. ✅ Complete 2026-08-01.**
+`package.json` (deps: `hono`, `lit`; dev: `@tailwindcss/cli`), Hono server, readonly DB
+handle with path config, Tailwind build script, `MerchantElement` base, registry, harness
+index + component page — and **Select branch `v0.1.0`** as the vehicle that proves it end
+to end.
+
+Verified in headless Chrome against the real dataset: shadow root present with 3 adopted
+stylesheets; Tailwind utilities applying inside it (`p-3` → 12px, `rounded-merchant` → 8px
+via the custom theme token); 28 branch buttons in 8 region groups; click emitting
+`merchant-branch-selected` with the right detail across the shadow boundary; the dark
+variant flipping `bg-white` to slate-900 *inside* the shadow root; and a host-set
+`--merchant-accent` reaching in and changing the selected border. No console errors.
 
 The branch picker is the right stack proof precisely because it is the least demanding
 component: 28 branches across 8 regions means no paging, no debounce, no async race and no
@@ -489,7 +508,7 @@ Each entry: what it does · key data · what it emits.
 
 | Risk | Mitigation |
 |---|---|
-| Tailwind-in-shadow-DOM is the one unproven piece | Phase 0 proves it on the branch picker — the component with the least of its own complexity, so failures are unambiguously stack failures |
+| ~~Tailwind-in-shadow-DOM is the one unproven piece~~ | **Closed.** Proven in Phase 0 on the branch picker, verified in a real browser — see §8 |
 | Upstream stock schema differs from §7.1 | Fixture provider + one query module absorbs the change |
 | Upstream work slips | Phases 1, 2 and 4 have no upstream dependency at all |
 | `datagenerator.db` regenerated, ids shift | Scenarios resolve by query, never by hardcoded id |

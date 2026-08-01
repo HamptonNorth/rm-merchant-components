@@ -1,0 +1,28 @@
+{
+  "name": "rm-merchant-components",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Builders' merchant UI components (Lit + Tailwind, shadow DOM) with a development harness, served by Hono over the datagenerator2 SQLite dataset.",
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "scripts": {
+    "dev": "bun run build && bun run --hot server/index.js",
+    "start": "bun run server/index.js",
+    "build": "bun run vendor && bun run css",
+    "vendor": "bun run scripts/build-vendor.js",
+    "css": "bun run scripts/build-css.js",
+    "css:watch": "bun run scripts/build-css.js --watch",
+    "explain": "bun run scripts/explain.js",
+    "check": "bun run scripts/check-client.js",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "lit": "^3.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.0.0"
+  }
+}
