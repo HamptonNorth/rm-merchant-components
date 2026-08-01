@@ -439,7 +439,18 @@ user 1 holds the full set at branch 1 but only `sales_enquiries` at branches 2�
 
 #### Tables
 
+**Implementation spec: [`docs/requirements-permissions.md`](requirements-permissions.md)** —
+full DDL, seed data, generation rules and verification queries, written to be worked from
+in datagenerator2. This section is the design and the reasoning behind it.
+
 ```sql
+-- Job functions. `code` is what application logic keys on; `approval_rank` orders the
+-- escalation chain (NULL = not an approver, 1 Manager, 2 Regional, 3 Head office).
+CREATE TABLE app_role (
+  id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, role TEXT NOT NULL,
+  approval_rank INTEGER
+);
+
 -- The catalogue. Adding a permission is an INSERT, never a schema change.
 CREATE TABLE permission (
   id            INTEGER PRIMARY KEY,   -- sparse and grouped: 1–8 sales, 51–56 stock, 90–91 works orders
@@ -522,11 +533,33 @@ affected user, where role defaults would be one edit. If that becomes painful, a
 role" alongside "copy from user". Grants stay per-user either way, so this can be added
 later without touching existing data.
 
-#### Approval routing
+#### Approval routing and the escalation chain
 
 Over-limit requests go to **the branch manager** — the data supports this directly, with
-exactly 28 Managers for 28 branches. The routing query is the one that argues hardest
-against storing grants as JSON:
+exactly 28 Managers for 28 branches. Two further roles complete the chain so that it always
+terminates:
+
+| `approval_rank` | Role | Covers |
+|---:|---|---|
+| — | Sales, Counter, Purchasing and stock | their own branches; not approvers |
+| 1 | Manager | one branch |
+| 2 | Regional manager | every branch in one of the 8 regions |
+| 3 | Head office | every trading branch, with no limits at all |
+
+Escalation goes to the **lowest-ranked approver above the raiser** who covers the branch,
+holds the permission, and has the headroom. Head office holding NULL limits is what
+guarantees a £500,000 purchase order always has somewhere to go — otherwise an over-limit
+request can reach the top of the chain and stick, which is the failure mode this table
+exists to prevent.
+
+Approval capability is deliberately **not** a separate `approve_*` permission: an approver
+is someone holding the same permission with a higher threshold. One concept, not two.
+
+Coverage is **enumerated** rather than implied — a regional manager gets a row per branch in
+their region, head office a row per branch. At 28 branches that is ~370 rows total, and it
+buys a single query shape at every level rather than a special case for "covers a region".
+
+The routing query is the one that argues hardest against storing grants as JSON:
 
 ```sql
 -- Who can approve permission :p at branch :b for an ex-VAT value of :v pence?
@@ -538,9 +571,12 @@ SELECT u.id, u.given_name, u.surname
   JOIN app_user_permission p
     ON p.app_user_id = u.id AND p.branch_id = ub.branch_id
  WHERE ub.branch_id = :b
-   AND r.role = 'Manager'
+   AND r.approval_rank IS NOT NULL
+   AND r.approval_rank > :raiser_rank        -- 0 when the raiser has no rank
    AND p.permission_id = :p
-   AND (p.approval_limit_pence IS NULL OR p.approval_limit_pence >= :v);
+   AND (p.approval_limit_pence IS NULL OR p.approval_limit_pence >= :v)
+ ORDER BY r.approval_rank
+ LIMIT 1;
 ```
 
 A join against indexed columns relationally; a full scan with JSON extraction otherwise.
@@ -622,8 +658,6 @@ seam; no component changes.
   tiers — desk ⊃ counter ⊃ enquiries, which the notes suggest — the answer is "the highest
   tier held", and they may be better modelled as one tiered value than three grants. If
   they are genuinely independent, the evaluation rule needs stating.
-- **When the branch manager is the one over limit**, who approves? Regional, or a second
-  manager? There are 8 regions but no regional role in `app_role`.
 - **Permission id 5 is absent** from the matrix (1,2,3,4,6,7,8) — deliberate gap or
   omission?
 - **`scope` per permission** is proposed because the matrix says "Working branch only" on

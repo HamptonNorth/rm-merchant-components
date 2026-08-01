@@ -12,14 +12,29 @@ Ordered by what unblocks the most work.
 
 ---
 
-## 1. Permissions: user × branch × permission — [plan §7.7](plan.md)
+## 1. Permissions, roles and approval escalation
 
-**Status:** design agreed 2026-08-01. Blocks nothing today; required before any component
-can enforce or display capability.
+**→ Full spec: [`requirements-permissions.md`](requirements-permissions.md)** — DDL, seed
+data, generation rules and verification queries, written to be worked from directly.
+Design rationale in [plan §7.7](plan.md).
 
-Three new tables. `app_role` stays exactly as it is — it holds job functions (Sales,
-Counter, Purchasing and stock, Manager), which are a different concept from permissions and
-must not be merged into one table.
+**Status:** agreed 2026-08-01, **next to build**. Wanted before further components, so they
+are developed against real permission data rather than fixtures.
+
+Three new tables plus changes to `app_role` and `branch`. `app_role` keeps holding job
+functions — a different concept from permissions, and the two must not be merged — but
+gains a `code` for logic to key on, an `approval_rank` to order the escalation chain, and
+two new roles:
+
+| rank | role | covers |
+|---:|---|---|
+| 1 | Manager | one branch |
+| 2 | Regional manager (new) | every branch in one of the 8 regions |
+| 3 | Head office (new) | every trading branch, no limits |
+
+Head office holding no limits is what guarantees the escalation chain always terminates.
+Approval capability is not a separate permission: an approver is someone holding the same
+permission at a higher rank with enough headroom.
 
 ```sql
 CREATE TABLE permission (
@@ -68,9 +83,13 @@ two or three within a region, Managers at one, and permission sets that differ b
 otherwise every component renders identically and nothing gets tested. Seed catalogue of 15
 permissions in plan §7.7.
 
-**Open before generation:** which threshold applies when a user holds both `sales_counter`
-and `sales_desk`; who approves when the branch manager is the one over limit; whether
-permission id 5 is a deliberate gap; the `scope` value for each permission.
+**Open before generation** (full list in the spec, §8): whether Head Office gets its own
+`branch` row — recommended, but it takes the branch count to 29 and operational pickers
+must then filter `branch_type = 'trading'`; the `scope` value for each of the 15
+permissions; and whether permission id 5 is a deliberate gap.
+
+**Open before enforcement, not generation:** which threshold applies when a user holds both
+`sales_counter` (£500) and `sales_desk` (£1,000).
 
 ---
 
