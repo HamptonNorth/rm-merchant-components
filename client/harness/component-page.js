@@ -31,6 +31,7 @@ class HarnessComponent extends LitElement {
     scenarios: { state: true },
     loadError: { state: true },
     schema: { state: true },
+    pageErrors: { state: true },
   };
 
   createRenderRoot() {
@@ -49,6 +50,7 @@ class HarnessComponent extends LitElement {
     this.scenarios = [];
     this.loadError = null;
     this.schema = [];
+    this.pageErrors = [];
     this.el = null;
     this.ctor = null;
     applyStoredTheme();
@@ -56,6 +58,18 @@ class HarnessComponent extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+
+    // When render() throws, Lit leaves the previously rendered DOM in place. Without this
+    // the component just looks stuck on a stale state — an empty message, an old list —
+    // with nothing to say it failed. Surfacing uncaught errors turns a confusing silence
+    // into an obvious red banner.
+    const record = (message, stack) => {
+      this.pageErrors = [{ message, stack, at: new Date() }, ...this.pageErrors].slice(0, 20);
+    };
+    window.addEventListener("error", (e) => record(e.message, e.error?.stack));
+    window.addEventListener("unhandledrejection", (e) =>
+      record(e.reason?.message ?? String(e.reason), e.reason?.stack),
+    );
     const id = decodeURIComponent(location.pathname.replace(/^\/c\//, "").replace(/\/$/, ""));
     this.meta = byId(id);
     if (!this.meta) {
@@ -120,6 +134,7 @@ class HarnessComponent extends LitElement {
   remount() {
     this.events = [];
     this.requests = [];
+    this.pageErrors = [];
     this.buildElement();
   }
 
@@ -151,19 +166,41 @@ class HarnessComponent extends LitElement {
                     .checked=${Boolean(value)}
                     @change=${(e) => this.setProp(f.name, e.target.checked)}
                   />`
-                : html`<input
-                    type=${f.type === "number" ? "number" : "text"}
-                    class="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
-                    .value=${value === null || value === undefined ? "" : String(value)}
-                    @input=${(e) => {
-                      const raw = e.target.value;
-                      if (f.type === "number") {
-                        this.setProp(f.name, raw === "" ? null : Number(raw));
-                      } else {
-                        this.setProp(f.name, raw);
-                      }
-                    }}
-                  />`}
+                : f.type === "select"
+                  ? html`<select
+                      class="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+                      .value=${value ?? ""}
+                      @change=${(e) => this.setProp(f.name, e.target.value)}
+                    >
+                      ${(f.options ?? []).map(
+                        (o) => html`<option value=${o} ?selected=${o === value}>${o}</option>`,
+                      )}
+                    </select>`
+                  : html`<input
+                      type=${f.type === "number" ? "number" : "text"}
+                      class="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+                      placeholder=${f.type === "csv" ? "01,02,31" : ""}
+                      .value=${value === null || value === undefined
+                        ? ""
+                        : Array.isArray(value)
+                          ? value.join(",")
+                          : String(value)}
+                      @input=${(e) => {
+                        const raw = e.target.value;
+                        if (f.type === "number") {
+                          this.setProp(f.name, raw === "" ? null : Number(raw));
+                        } else if (f.type === "csv") {
+                          // The property is a real array; the control is a text field.
+                          const codes = raw
+                            .split(",")
+                            .map((s) => s.trim())
+                            .filter(Boolean);
+                          this.setProp(f.name, codes.length ? codes : null);
+                        } else {
+                          this.setProp(f.name, raw);
+                        }
+                      }}
+                    />`}
               <span class="mt-1 block text-xs text-slate-500 dark:text-slate-400">${f.description}</span>
             </label>
           `;
@@ -336,6 +373,30 @@ class HarnessComponent extends LitElement {
 
         <div class="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_380px]">
           <main class="min-w-0">
+            ${this.pageErrors.length
+              ? html`
+                  <div
+                    class="mb-3 rounded-lg border border-red-300 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950"
+                    role="alert"
+                  >
+                    <p class="text-sm font-semibold text-red-900 dark:text-red-100">
+                      ${this.pageErrors.length} uncaught
+                      ${this.pageErrors.length === 1 ? "error" : "errors"} — what you see below
+                      may be stale
+                    </p>
+                    ${this.pageErrors.slice(0, 3).map(
+                      (e) => html`
+                        <p class="mt-2 font-mono text-xs text-red-800 dark:text-red-200">
+                          ${e.message}
+                        </p>
+                        ${e.stack
+                          ? html`<pre class="mt-1 max-h-32 overflow-auto text-xs text-red-700 dark:text-red-300">${e.stack}</pre>`
+                          : nothing}
+                      `,
+                    )}
+                  </div>
+                `
+              : nothing}
             <div class="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
               <div id="stage-mount" style="width:${width}; max-width:100%; margin:0 auto;"></div>
             </div>

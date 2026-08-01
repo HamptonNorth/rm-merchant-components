@@ -11,15 +11,29 @@
 
 export const components = [
   {
+    id: "working-branch",
+    tag: "merchant-working-branch",
+    title: "Working branch",
+    version: "0.1.0",
+    status: "ready",
+    phase: 0,
+    group: "Staff",
+    description:
+      "Which branch a member of staff is operating from. Compact dropdown, preselected to their app_user.default_branch_id — the sign-in behaviour — and restricted to the branches they may cover.",
+    dataDeps: ["app_user", "app_role", "branch", "region"],
+    module: "/src/components/working-branch/working-branch.js",
+    events: ["merchant-working-branch-changed"],
+  },
+  {
     id: "select-branch",
     tag: "merchant-select-branch",
     title: "Select branch",
-    version: "0.1.0",
+    version: "0.2.0",
     status: "ready",
     phase: 0,
     group: "Customer",
     description:
-      "All 28 branches grouped by region, selectable, with address and contact details. v0.2.0 adds home-branch pinning for a given customer.",
+      "Which branch for a piece of work — order-taking, issuing, transfer. Card grid grouped by region with addresses, optionally restricted to a list of branch codes. v0.3.0 pins the customer's owning branch.",
     dataDeps: ["branch", "region"],
     module: "/src/components/select-branch/select-branch.js",
     events: ["merchant-branch-selected"],
@@ -135,4 +149,6 @@ export function byId(id) {
   return components.find((c) => c.id === id) ?? null;
 }
 
+// Declaration order, so "Staff" leads — these are staff tools, not customer-facing
+// (docs/plan.md §0).
 export const groups = [...new Set(components.map((c) => c.group))];

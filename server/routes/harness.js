@@ -38,7 +38,84 @@ const SCENARIOS = [
     component: "select-branch",
     label: "Nothing selected",
     resolve: () => ({ ok: true }),
-    props: () => ({ selectedId: null, regionId: null }),
+    props: () => ({ selectedId: null, regionId: null, allowedCodes: null }),
+  },
+  {
+    id: "branch-restricted-codes",
+    component: "select-branch",
+    label: "Restricted to 3 branch codes",
+    resolve: () => db.query("select group_concat(code) as codes from (select code from branch order by code limit 3)").get(),
+    props: (row) => ({ allowedCodes: row.codes.split(","), regionId: null }),
+  },
+  {
+    id: "branch-unknown-code",
+    component: "select-branch",
+    label: "Access list with a typo",
+    resolve: () => db.query("select code from branch order by code limit 1").get(),
+    props: (row) => ({ allowedCodes: [row.code, "ZZ"], regionId: null }),
+  },
+
+  // working-branch — the employee's operating context.
+  {
+    id: "user-counter-staff",
+    component: "working-branch",
+    label: "Counter staff (single branch)",
+    resolve: () =>
+      db
+        .query(
+          `select u.id from app_user u join app_role r on r.id = u.default_role_id
+            where r.role = 'Counter' order by u.id limit 1`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.id, allowedCodes: null, selectedId: null }),
+  },
+  {
+    id: "user-rep-two-branches",
+    component: "working-branch",
+    label: "Sales rep covering two branches",
+    // Their default branch plus one more in the same region — the travelling-rep case
+    // the role matrix will eventually express (docs/plan.md §7.7).
+    resolve: () =>
+      db
+        .query(
+          `select u.id as user_id,
+                  (select group_concat(code) from (
+                     select b2.code from branch b2
+                      where b2.region_id = b.region_id order by b2.code limit 2)) as codes
+             from app_user u
+             join app_role r on r.id = u.default_role_id
+             join branch b on b.id = u.default_branch_id
+            where r.role = 'Sales' order by u.id limit 1`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.user_id, allowedCodes: row.codes.split(","), selectedId: null }),
+  },
+  {
+    id: "user-away-from-default",
+    component: "working-branch",
+    label: "Working away from default branch",
+    resolve: () =>
+      db
+        .query(
+          `select u.id as user_id, b.id as other_branch_id
+             from app_user u, branch b
+            where b.id <> u.default_branch_id order by u.id, b.id limit 1`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.user_id, selectedId: row.other_branch_id, allowedCodes: null }),
+  },
+  {
+    id: "user-manager",
+    component: "working-branch",
+    label: "Branch manager",
+    resolve: () =>
+      db
+        .query(
+          `select u.id from app_user u join app_role r on r.id = u.default_role_id
+            where r.role = 'Manager' order by u.id limit 1`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.id, allowedCodes: null, selectedId: null }),
   },
 ];
 

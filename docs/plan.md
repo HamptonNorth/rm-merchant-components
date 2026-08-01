@@ -9,6 +9,43 @@ Bun + Hono on the server, Lit + Tailwind in the browser, plain JavaScript throug
 
 ---
 
+## 0. Who uses these
+
+**Merchant staff, not customers.** The users are counter and sales-desk staff — closer to
+retail till operators than to end customers. Every component is an internal tool operated
+by a signed-in `app_user`, and that shapes the defaults: dense information, keyboard speed,
+and business facts (credit status, ownership, stock) shown plainly rather than softened.
+
+The dataset has 175 `app_user` rows across all 28 branches (5–7 each) in four roles —
+Sales 67, Counter 45, Purchasing and stock 35, Manager 28. Exactly one Manager per branch.
+
+### Two different branch relationships — do not conflate them
+
+This distinction drives the component split in §9 and recurs throughout the system.
+
+| | **Customer home branch** | **User default branch** |
+|---|---|---|
+| Column | `customer.home_branch_id` | `app_user.default_branch_id` |
+| Means | **Ownership.** The home-branch manager owns the account — special prices, credit limit, relationship. | **Location.** Where this member of staff physically is. John Smith signs in at the counter and is set to Liverpool. |
+| Changes | Rarely — an attribute of the customer | Per shift — session context |
+| Cardinality | One owner | One default, but potentially **many permitted** — a sales desk rep covering Liverpool and Manchester |
+| Exceptions | A large national account may be owned by head office or a regional large-accounts manager rather than a branch | — |
+
+Two consequences worth recording now:
+
+- **Serving a customer away from their home branch is a business event, not a neutral one.**
+  A Warrington plumber turning up in London should raise a flag: the owning branch holds
+  the pricing and credit relationship. That check belongs in the customer-facing components
+  (find-customer, credit-status) rather than in a branch picker, and needs both facts —
+  the working branch and the customer's owning branch — in scope at once.
+- **National accounts do not fit the branch-ownership model.** 52 of the 39,087 customers
+  are flagged `is_national_account`, and per the ownership rule above they would be owned
+  by head office or a regional accounts manager. The schema has no way to express that:
+  they still carry an ordinary `home_branch_id`, and there is no head-office branch or
+  large-accounts-manager field. Flagged for datagenerator2 (§7.7); not blocking.
+
+---
+
 ## 1. Decisions locked
 
 Agreed 2026-08-01:
@@ -387,6 +424,37 @@ upstream shape ends up differing from §7.1, the change is confined to one query
 
 ---
 
+### 7.7 Role × user × branch matrix (and national-account ownership)
+
+Two gaps in how the dataset models staff and ownership. Neither blocks current work; both
+change what the components can do honestly.
+
+**Multi-branch access.** Every one of the 175 `app_user` rows carries exactly one
+`default_branch_id`, and there is no user→branch access table. A sales desk rep covering
+Liverpool and Manchester cannot be expressed. Until it exists, `working-branch` takes an
+`allowedCodes` array from the host, which is a **display filter, not authorisation** — it
+arrives from the browser. Proposed shape, following `NAMING.md`:
+
+| Table | Columns |
+|---|---|
+| `app_user_branch` | `id`, `app_user_id`, `branch_id`, `app_role_id` (nullable — role may vary by branch), `is_default` |
+
+Unique on `(app_user_id, branch_id)`. `is_default` then supersedes
+`app_user.default_branch_id`, or that column stays as the fast path and this table lists
+the rest. Realistic generation: Counter staff at one branch, Sales at two or three within
+a region, Managers at one, area/regional roles across a whole region.
+
+When it lands, `listBranchesForUser()` in `server/queries/branches.js` joins to it and
+`allowedCodes` stops being load-bearing. That function is the single seam — no component
+changes.
+
+**National-account ownership.** See §0: 52 customers are `is_national_account` but the
+schema can only express branch ownership. Options are a nullable
+`customer.owning_sales_rep_id`, a head-office pseudo-branch, or an explicit
+`customer.ownership_type` enum (`branch` / `regional` / `head_office`). Worth deciding
+before credit-status renders "owned by", because that component states who holds the
+credit relationship.
+
 ## 8. Build order
 
 Each phase ends with something runnable.
@@ -443,7 +511,7 @@ change scope, and neither blocks Phase 0–2.
 
 ---
 
-## 9. The nine components
+## 9. The components
 
 Each entry: what it does · key data · what it emits.
 
@@ -469,12 +537,33 @@ Each entry: what it does · key data · what it emits.
    `merchant-credit-checked { customerId, verdict, headroomPence }`,
    `merchant-invoice-selected { invoiceNumber, customerId }`.
 
-4. **Select branch for customer** — built in two versions, and the Phase 0 stack proof.
-   `v0.1.0`: all 28 branches grouped by their 8 regions, selectable, each showing code,
-   name, address and phone; no customer required. `v0.2.0` (Phase 1): takes a `customerId`
-   and pins the customer's home branch at the top, marked, with the rest still selectable. ·
-   `branch`, `region`, `customer.home_branch_id` ·
-   `merchant-branch-selected { id, code, name, isHome }`.
+4. **Select branch** `v0.2.0` — *which branch for this piece of work*: order-taking branch,
+   issuing branch, transfer destination. All 28 branches grouped by their 8 regions as a
+   card grid with code, name, address and telephone, optionally narrowed by `allowedCodes`.
+   Unknown codes are reported rather than silently dropped, because a typo in an access list
+   otherwise looks like a permissions problem. `v0.3.0` (Phase 1) takes a `customerId` and
+   pins the customer's **owning** branch. · `branch`, `region`, `customer.home_branch_id` ·
+   `merchant-branch-selected { id, code, name, isCustomerHome }`.
+
+4b. **Working branch** `v0.1.0` — *where is this member of staff operating from*. A compact
+   native `<select>`, grouped into optgroups when more than one region is in range,
+   preselected to the user's `app_user.default_branch_id` (the sign-in behaviour) and
+   restricted to the branches they may cover. Shows who is signed in and their role, and
+   flags when they are working away from their default. · `app_user`, `app_role`, `branch`,
+   `region` · `merchant-working-branch-changed { id, code, name, isDefault, userId, cause }`.
+
+   **Why these are two components, not one with a `format` property.** They answer
+   different questions (§0): purpose versus location. They read different tables, take
+   different defaults, and have different a11y models — a grid of buttons versus a native
+   select. `dense` and `showContact` are meaningless in a dropdown. And per-component
+   versioning means a card-layout tweak would otherwise bump the version for dropdown
+   consumers. They share a non-visual core (`shared/branches.js`) so the row shaping cannot
+   drift, and a host can swap one for the other by listening for the other event.
+
+   `cause` distinguishes the component preselecting on load (`"default"`) from a person
+   actively choosing (`"user"`) — a host persisting working context needs to tell those
+   apart. Auto-selection only fires when the default branch is actually in the permitted
+   list, so a rep whose default was revoked is not silently placed there.
 
 5. **Find product(s)** `v0.1.0` — search by code / name / barcode, faceted by product-group
    subtree (`path LIKE`), supplier and UOM type; multi-select mode for order building. ·

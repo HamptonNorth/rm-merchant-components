@@ -68,7 +68,14 @@ Each component extends `MerchantElement`, renders into shadow DOM, and:
 Because Tailwind cannot cross a shadow boundary, `bun run css` emits the stylesheet twice:
 once as CSS for the harness chrome, once as a `CSSResult` adopted by every component.
 
+## Who uses these
+
+**Merchant staff, not customers** — counter and sales-desk operators, signed in as an
+`app_user`. See `docs/plan.md` §0, which also covers the distinction between a customer's
+*home branch* (ownership) and a user's *default branch* (location). Those are different
+relationships and drive the two separate branch components.
+
 ## Status
 
-Phase 0 complete — the stack, the harness, and `select-branch` v0.1.0. See `docs/plan.md`
-§8 for what follows.
+Phase 0 complete — the stack, the harness, `select-branch` v0.2.0 and `working-branch`
+v0.1.0. See `docs/plan.md` §8 for what follows.

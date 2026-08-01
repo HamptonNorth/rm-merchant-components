@@ -44,9 +44,18 @@ export function createApi({ base = "" } = {}) {
     return { ...body, url: url.pathname + url.search, status: res.status, clientMs };
   }
 
+  const csv = (v) => (Array.isArray(v) ? v.join(",") : v);
+
   return {
-    listBranches: ({ regionId } = {}) => get("/api/branches", { region: regionId }),
+    listBranches: ({ regionId, codes } = {}) =>
+      get("/api/branches", { region: regionId, codes: csv(codes) }),
     listRegions: () => get("/api/branches/regions"),
+
+    // The employee's operating context: identity, default branch, permitted branches.
+    listBranchesForUser: ({ userId, codes } = {}) =>
+      get(`/api/app-users/${userId}/branches`, { codes: csv(codes) }),
+    listAppUsers: ({ limit } = {}) => get("/api/app-users", { limit }),
+
     listScenarios: ({ component } = {}) => get("/api/harness/scenarios", { component }),
     dataset: () => get("/api/harness/dataset"),
   };
