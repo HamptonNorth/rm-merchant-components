@@ -56,6 +56,9 @@ export function createApi({ base = "" } = {}) {
       get(`/api/app-users/${userId}/branches`, { codes: csv(codes) }),
     listAppUsers: ({ limit } = {}) => get("/api/app-users", { limit }),
 
+    // What this member of staff may do, and where. One call: identity, coverage, grants.
+    getUserPermissions: ({ userId } = {}) => get(`/api/app-users/${userId}/permissions`),
+
     listScenarios: ({ component } = {}) => get("/api/harness/scenarios", { component }),
     dataset: () => get("/api/harness/dataset"),
   };

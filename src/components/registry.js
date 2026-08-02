@@ -25,6 +25,20 @@ export const components = [
     events: ["merchant-working-branch-changed"],
   },
   {
+    id: "user-permissions-view",
+    tag: "merchant-user-permissions-view",
+    title: "User permissions",
+    version: "0.1.0",
+    status: "ready",
+    phase: 0,
+    group: "Staff",
+    description:
+      "What one member of staff may do, and where — grouped by category, with approval thresholds. Branches collapse to ranges (\"All 4 North West branches\") where the permission and limit match. Behind the future account button.",
+    dataDeps: ["app_user", "app_role", "app_user_branch", "app_user_permission", "permission", "branch", "region"],
+    module: "/src/components/user-permissions-view/user-permissions-view.js",
+    events: ["merchant-user-permissions-loaded", "merchant-user-permissions-density-changed"],
+  },
+  {
     id: "select-branch",
     tag: "merchant-select-branch",
     title: "Select branch",

@@ -8,6 +8,7 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { branches, appUsers } from "./routes/branches.js";
+import { userPermissions } from "./routes/permissions.js";
 import { harness } from "./routes/harness.js";
 import { dbPath, isDev } from "./db.js";
 
@@ -16,6 +17,7 @@ export const app = new Hono();
 const api = new Hono();
 api.route("/branches", branches);
 api.route("/app-users", appUsers);
+api.route("/app-users", userPermissions);
 api.route("/harness", harness);
 api.get("/", (c) => c.json({ name: "rm-merchant-components", dbPath, dev: isDev }));
 
