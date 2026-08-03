@@ -14,13 +14,17 @@
 // come free, and this control lives in furniture where compactness matters more than
 // browsing. If the permitted list ever outgrows a select, this becomes a combobox — which
 // is a change to this component only.
+//
+// The list is the user's actual coverage (app_user_branch), and the notice under it reports
+// whether they hold any permissions at the branch they have selected — not merely whether
+// it differs from their default. See accessFor().
 
 import { html, css, nothing } from "lit";
 import { MerchantElement } from "../shared/merchant-element.js";
 import { groupByRegion, codesConverter, branchLabel, missingCodes } from "../shared/branches.js";
 
 export class MerchantWorkingBranch extends MerchantElement {
-  static version = "0.1.0";
+  static version = "0.2.0";
 
   static styles = [...MerchantElement.styles];
 
@@ -48,13 +52,14 @@ export class MerchantWorkingBranch extends MerchantElement {
       type: "csv",
       default: null,
       description:
-        "Branch codes this user may operate from, e.g. 01,03. Blank shows all — the dataset has no user→branch access table yet (docs/plan.md §7.7).",
+        "Narrow the list further, e.g. 01,03. The list already comes from this user's coverage, so this can only subtract from it.",
     },
     {
       name: "selectedId",
       type: "number",
       default: null,
-      description: "Override the selection. Blank falls back to the user's default branch.",
+      description:
+        "Override the selection. Blank falls back to the user's default branch. Set it to a branch they do not cover to see the no-permissions state.",
     },
     {
       name: "heading",
@@ -125,6 +130,31 @@ export class MerchantWorkingBranch extends MerchantElement {
     return groupByRegion(this.branches);
   }
 
+  // How the selected branch stands for this user. Three states, in the order a person
+  // cares about them:
+  //
+  //   default    their own branch — the ordinary case
+  //   permitted  they hold permissions here, but it is not where they are based
+  //   denied     they hold nothing here and cannot work from it
+  //
+  // The test is the permission count, not whether the branch differs from their default.
+  // Being away from your default branch is normal for anyone covering more than one — a
+  // rep at Warrington instead of Chester is working, not doing something irregular — so
+  // warning about it trains people to ignore the warning.
+  accessFor(branch) {
+    if (!branch) return "denied";
+    if (!branch.permission_count) return "denied";
+    return branch.id === this.defaultBranchId ? "default" : "permitted";
+  }
+
+  get selectedBranch() {
+    return this.branches.find((b) => b.id === this.selectedId) ?? null;
+  }
+
+  get access() {
+    return this.selectedId == null ? null : this.accessFor(this.selectedBranch);
+  }
+
   select(branch, { cause = "user" } = {}) {
     if (!branch) return;
     this.selectedId = branch.id;
@@ -133,6 +163,8 @@ export class MerchantWorkingBranch extends MerchantElement {
       code: branch.code,
       name: branch.name,
       isDefault: branch.id === this.defaultBranchId,
+      access: this.accessFor(branch),
+      permissionCount: branch.permission_count ?? 0,
       userId: this.userId,
       // "default" means the component preselected on load; "user" means someone chose.
       // A host persisting working context wants to tell those apart.
@@ -159,11 +191,56 @@ export class MerchantWorkingBranch extends MerchantElement {
 
     // Only group when there is more than one region to group by — optgroups round a
     // single region are noise.
-    return groups.length > 1
-      ? groups.map(
-          (g) => html`<optgroup label=${g.name}>${g.rows.map(option)}</optgroup>`,
-        )
-      : this.branches.map(option);
+    const options =
+      groups.length > 1
+        ? groups.map((g) => html`<optgroup label=${g.name}>${g.rows.map(option)}</optgroup>`)
+        : this.branches.map(option);
+
+    // A host can set selectedId to a branch this user has no access to — a working branch
+    // restored from a stale session, or permissions revoked since. The select would
+    // otherwise silently show the first option while the notice says access is denied,
+    // which is worse than either message alone.
+    if (this.selectedId != null && !this.selectedBranch) {
+      return [
+        html`<option value=${this.selectedId} selected disabled>
+          Branch not available to you
+        </option>`,
+        ...options,
+      ];
+    }
+    return options;
+  }
+
+  renderAccessNotice() {
+    const state = this.access;
+    if (!state) return nothing;
+
+    const branch = this.selectedBranch;
+    const count = branch?.permission_count ?? 0;
+    const permissions = `${count} permission${count === 1 ? "" : "s"}`;
+    const defaultName =
+      this.branches.find((b) => b.id === this.defaultBranchId)?.name ??
+      this.user?.default_branch_name ??
+      "unknown";
+
+    const NOTICE = {
+      default: {
+        tone: "text-slate-500 dark:text-slate-400",
+        text: `Your default branch — ${permissions} here.`,
+      },
+      permitted: {
+        tone: "text-sky-700 dark:text-sky-300",
+        text: `Valid working branch, not your default (${defaultName}) — ${permissions} here.`,
+      },
+      denied: {
+        tone: "font-medium text-red-700 dark:text-red-400",
+        text: "No permissions at this branch — you cannot work from here.",
+      },
+    }[state];
+
+    return html`<p part="notice access-${state}" class="mt-1.5 text-xs ${NOTICE.tone}">
+      ${NOTICE.text}
+    </p>`;
   }
 
   render() {
@@ -179,9 +256,6 @@ export class MerchantWorkingBranch extends MerchantElement {
     }
 
     const missing = missingCodes(this.allowedCodes, this.branches);
-    const selected = this.branches.find((b) => b.id === this.selectedId);
-    const awayFromDefault =
-      selected && this.defaultBranchId != null && selected.id !== this.defaultBranchId;
 
     return html`
       <section part="root" class="text-slate-900 dark:text-slate-100">
@@ -207,18 +281,10 @@ export class MerchantWorkingBranch extends MerchantElement {
           </select>
         </label>
 
-        ${awayFromDefault
-          ? html`<p
-              part="notice"
-              class="mt-1.5 text-xs text-amber-800 dark:text-amber-300"
-            >
-              Not your default branch (${this.branches.find((b) => b.id === this.defaultBranchId)
-                ?.name ?? "unknown"}).
-            </p>`
-          : nothing}
+        ${this.renderAccessNotice()}
         ${missing.length
           ? html`<p part="notice" class="mt-1.5 text-xs text-amber-800 dark:text-amber-300">
-              Unknown branch ${missing.length === 1 ? "code" : "codes"}:
+              Not among your branches:
               <span class="font-mono">${missing.join(", ")}</span>
             </p>`
           : nothing}

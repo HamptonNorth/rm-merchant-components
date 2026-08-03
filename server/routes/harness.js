@@ -90,19 +90,63 @@ const SCENARIOS = [
         .get(),
     props: (row) => ({ userId: row.user_id, allowedCodes: row.codes.split(","), selectedId: null }),
   },
+  // The three access states the notice has to distinguish. Being away from your default
+  // branch is normal; having no permissions there is not.
   {
-    id: "user-away-from-default",
+    id: "access-default",
     component: "working-branch",
-    label: "Working away from default branch",
+    label: "Access · at their default branch",
     resolve: () =>
       db
         .query(
-          `select u.id as user_id, b.id as other_branch_id
-             from app_user u, branch b
-            where b.id <> u.default_branch_id order by u.id, b.id limit 1`,
+          `select ub.app_user_id as user_id, ub.branch_id
+             from app_user_branch ub where ub.is_default = 1
+            order by ub.app_user_id limit 1`,
         )
         .get(),
-    props: (row) => ({ userId: row.user_id, selectedId: row.other_branch_id, allowedCodes: null }),
+    props: (row) => ({ userId: row.user_id, selectedId: row.branch_id, allowedCodes: null }),
+  },
+  {
+    id: "access-permitted-reduced",
+    component: "working-branch",
+    label: "Access · covered branch, fewer permissions than at home",
+    // The case that makes the permission count worth showing: a valid working branch where
+    // the user can do materially less than at their default.
+    resolve: () =>
+      db
+        .query(
+          `select ub.app_user_id as user_id, ub.branch_id,
+                  (select count(*) from app_user_permission up
+                    where up.app_user_id = ub.app_user_id and up.branch_id = ub.branch_id) as n
+             from app_user_branch ub
+            where ub.is_default = 0
+              and n > 0
+              and n < (select count(*) from app_user_permission up2
+                        join app_user_branch d on d.app_user_id = up2.app_user_id
+                                              and d.branch_id  = up2.branch_id
+                       where up2.app_user_id = ub.app_user_id and d.is_default = 1)
+            order by ub.app_user_id limit 1`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.user_id, selectedId: row.branch_id, allowedCodes: null }),
+  },
+  {
+    id: "access-denied",
+    component: "working-branch",
+    label: "Access · no permissions at the selected branch",
+    // A working branch restored from a stale session, or access revoked since. The select
+    // cannot reach this state on its own, so the host sets it.
+    resolve: () =>
+      db
+        .query(
+          `select u.id as user_id, b.id as branch_id
+             from app_user u, branch b
+            where not exists (select 1 from app_user_branch ub
+                               where ub.app_user_id = u.id and ub.branch_id = b.id)
+            order by u.id, b.id limit 1`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.user_id, selectedId: row.branch_id, allowedCodes: null }),
   },
   {
     id: "user-manager",
@@ -164,6 +208,97 @@ const SCENARIOS = [
         )
         .get(),
     props: (row) => ({ userId: row.id, dense: true }),
+  },
+  {
+    id: "perms-fixture-158",
+    component: "user-permissions-view",
+    label: "Fixture 158 — everything at 01-04 + head office, sales at 11-14",
+    // Built to a written spec in datagenerator2 src/generate/permissions.js rather than from
+    // a role, so these branch sets do not move when the seed changes. Exercises all three
+    // range forms in one card: a count, a region plus a straggler, and a whole region.
+    resolve: () => db.query("select id from app_user where id = 158").get(),
+    props: (row) => ({ userId: row.id, dense: true }),
+  },
+  {
+    id: "perms-fixture-159",
+    component: "user-permissions-view",
+    label: "Fixture 159 — everything in London, sales at 42-43",
+    // 42 and 43 are 2 of the Midlands' 3 branches, so they must be named rather than
+    // collapsed to "all 2 Midlands branches".
+    resolve: () => db.query("select id from app_user where id = 159").get(),
+    props: (row) => ({ userId: row.id, dense: true }),
+  },
+  // Scoped to a working branch — the everyday path once past the sign-in gate.
+  {
+    id: "perms-working-default",
+    component: "user-permissions-view",
+    label: "Signed in · at their default branch",
+    resolve: () =>
+      db
+        .query(
+          `select ub.app_user_id as id, ub.branch_id from app_user_branch ub
+            where ub.is_default = 1 and ub.app_user_id in
+                  (select app_user_id from app_user_branch group by app_user_id having count(*) > 1)
+            order by ub.app_user_id limit 1`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.id, workingBranchId: row.branch_id, expanded: false }),
+  },
+  {
+    id: "perms-working-reduced",
+    component: "user-permissions-view",
+    label: "Signed in · away from home, fewer permissions",
+    // The case the scoping exists for: the header count must say what applies HERE, not
+    // what the user holds across the network.
+    resolve: () =>
+      db
+        .query(
+          `select ub.app_user_id as id, ub.branch_id,
+                  (select count(*) from app_user_permission up
+                    where up.app_user_id = ub.app_user_id and up.branch_id = ub.branch_id) as n
+             from app_user_branch ub
+            where ub.is_default = 0
+              and n > 0
+              and n < (select count(*) from app_user_permission up2
+                        join app_user_branch d on d.app_user_id = up2.app_user_id
+                                              and d.branch_id  = up2.branch_id
+                       where up2.app_user_id = ub.app_user_id and d.is_default = 1)
+            order by ub.app_user_id limit 1`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.id, workingBranchId: row.branch_id, expanded: true }),
+  },
+  {
+    id: "perms-working-head-office",
+    component: "user-permissions-view",
+    label: "Signed in · head office, 28 other branches expanded",
+    // 28 other branches collapse to a handful of groups. One section per branch would be
+    // the wall the card exists to avoid.
+    resolve: () =>
+      db
+        .query(
+          `select ub.app_user_id as id, ub.branch_id from app_user_branch ub
+            where ub.is_default = 1
+              and ub.app_user_id = (select app_user_id from app_user_permission
+                                     group by app_user_id order by count(*) desc limit 1)`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.id, workingBranchId: row.branch_id, expanded: true }),
+  },
+  {
+    id: "perms-working-denied",
+    component: "user-permissions-view",
+    label: "Signed in · no permissions at that branch",
+    resolve: () =>
+      db
+        .query(
+          `select u.id, b.id as branch_id from app_user u, branch b
+            where not exists (select 1 from app_user_branch ub
+                               where ub.app_user_id = u.id and ub.branch_id = b.id)
+            order by u.id, b.id limit 1`,
+        )
+        .get(),
+    props: (row) => ({ userId: row.id, workingBranchId: row.branch_id, expanded: false }),
   },
   {
     id: "perms-head-office",

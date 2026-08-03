@@ -77,7 +77,16 @@ export function describeBranches(branchIds, coverage = []) {
   const regions = new Map();
   for (const c of covered) {
     const key = c.region_id ?? "unassigned";
-    if (!regions.has(key)) regions.set(key, { name: c.region_name, covered: [], held: [] });
+    if (!regions.has(key)) {
+      // region_branch_count is how many branches the region really has. Falling back to the
+      // covered count is only right when the caller has not supplied it.
+      regions.set(key, {
+        name: c.region_name,
+        total: Number(c.region_branch_count) || null,
+        covered: [],
+        held: [],
+      });
+    }
     const r = regions.get(key);
     r.covered.push(c.branch_id);
     if (held.has(c.branch_id)) r.held.push(c.branch_id);
@@ -87,8 +96,12 @@ export function describeBranches(branchIds, coverage = []) {
   const loose = [];
   for (const r of regions.values()) {
     if (!r.held.length) continue;
-    if (r.name && r.covered.length > 1 && r.held.length === r.covered.length) {
-      parts.push(`all ${r.covered.length} ${r.name} branches`);
+    // "All 4 North West branches" must mean every branch in the North West, not every one the
+    // user happens to cover — otherwise 2 of the Midlands' 3 reads as "all 2 Midlands
+    // branches", which states something false about the network.
+    const total = r.total ?? r.covered.length;
+    if (r.name && total > 1 && r.held.length === total) {
+      parts.push(`all ${total} ${r.name} branches`);
     } else {
       loose.push(...r.held);
     }
@@ -187,4 +200,65 @@ export function groupGrants({ grants = [], coverage = [], dense = true } = {}) {
 // collapse, so the toggle is hidden rather than offered as a no-op.
 export function isCollapsible(coverage = []) {
   return coverage.length > 1;
+}
+
+// What a user can do at one branch, as a comparable string. Permission AND limit, because
+// the same permission at a lower limit is different access, not the same access.
+export function grantSignature(grants) {
+  return grants
+    .map((g) => `${g.permission_id}:${g.approval_limit_pence ?? "n"}`)
+    .sort()
+    .join("|");
+}
+
+// Group the user's OTHER branches by what they can actually do there, for the expanded
+// view of the card (docs/plan.md §9).
+//
+// One section per branch is the obvious reading of "show me my other branches", and it is
+// wrong at the top end: a head office user covers 29 and would get 29 near-identical
+// blocks. In the generated data the maximum number of *distinct* permission sets any user
+// has is five — 26 of the 37 multi-branch users have exactly two — so grouping by access
+// turns 29 sections into five, and answers the real question faster. "Warrington: same as
+// here" is what someone needs when their own branch is busy; repeating fifteen identical
+// permissions under a Warrington heading is not.
+//
+// Groups are ordered: identical-to-working first, then most access to least.
+export function groupBranchesByAccess({ grants = [], coverage = [], workingBranchId } = {}) {
+  const byBranch = new Map();
+  for (const g of grants) {
+    const id = Number(g.branch_id);
+    if (!byBranch.has(id)) byBranch.set(id, []);
+    byBranch.get(id).push(g);
+  }
+
+  const workingSignature =
+    workingBranchId == null ? null : grantSignature(byBranch.get(Number(workingBranchId)) ?? []);
+
+  const groups = new Map();
+  for (const c of coverage) {
+    const branchId = Number(c.branch_id);
+    if (workingBranchId != null && branchId === Number(workingBranchId)) continue;
+
+    const branchGrants = byBranch.get(branchId) ?? [];
+    const signature = grantSignature(branchGrants);
+    if (!groups.has(signature)) {
+      groups.set(signature, {
+        signature,
+        branchIds: [],
+        grants: branchGrants,
+        permissionCount: new Set(branchGrants.map((g) => g.permission_id)).size,
+        sameAsWorking: workingSignature != null && signature === workingSignature,
+      });
+    }
+    groups.get(signature).branchIds.push(branchId);
+  }
+
+  return [...groups.values()]
+    .map((g) => ({ ...g, where: describeBranches(g.branchIds, coverage) }))
+    .sort(
+      (a, b) =>
+        Number(b.sameAsWorking) - Number(a.sameAsWorking) ||
+        b.permissionCount - a.permissionCount ||
+        b.branchIds.length - a.branchIds.length,
+    );
 }

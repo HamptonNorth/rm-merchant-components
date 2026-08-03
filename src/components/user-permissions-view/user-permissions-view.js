@@ -18,18 +18,23 @@
 import { html, nothing } from "lit";
 import { MerchantElement } from "../shared/merchant-element.js";
 import { fmtPence } from "../shared/format.js";
-import { groupGrants, isCollapsible } from "../shared/permissions.js";
+import { groupGrants, isCollapsible, groupBranchesByAccess } from "../shared/permissions.js";
 
 export class MerchantUserPermissionsView extends MerchantElement {
-  static version = "0.1.0";
+  static version = "0.2.0";
 
   static styles = [...MerchantElement.styles];
 
   static properties = {
     userId: { type: Number, attribute: "user-id" },
+    // The branch chosen at sign-in (<merchant-working-branch>). Set, the card answers
+    // "what can I do here" and everything else moves behind a disclosure. Unset, it stays
+    // the whole-profile view it was at v0.1.0, which is what an admin screen wants.
+    workingBranchId: { type: Number, attribute: "working-branch-id" },
     dense: { type: Boolean },
     heading: { type: String },
     showDescriptions: { type: Boolean, attribute: "show-descriptions" },
+    expanded: { type: Boolean },
     user: { attribute: false, state: true },
     coverage: { attribute: false, state: true },
     grants: { attribute: false, state: true },
@@ -45,11 +50,25 @@ export class MerchantUserPermissionsView extends MerchantElement {
         "app_user id — whoever is signed in. Try 1 (Manager, Chester) or 184 (Head office, 430 grants across 29 branches).",
     },
     {
+      name: "workingBranchId",
+      type: "number",
+      default: null,
+      description:
+        "The branch chosen at sign-in. Set, the card shows what this user can do there and puts other branches behind a link. Blank shows the whole profile across every branch, as an admin screen would want.",
+    },
+    {
+      name: "expanded",
+      type: "boolean",
+      default: false,
+      description:
+        "Open the other-branches section. Only appears when a working branch is set and the user covers more than one.",
+    },
+    {
       name: "dense",
       type: "boolean",
       default: true,
       description:
-        "Collapse branches to ranges where the permission and limit are the same. Off lists every branch. Hidden when the user covers one branch, since there is nothing to collapse.",
+        "Collapse branches to ranges where the permission and limit are the same. Off lists every branch. Hidden when there is one branch in view, since there is nothing to collapse.",
     },
     {
       name: "heading",
@@ -68,9 +87,11 @@ export class MerchantUserPermissionsView extends MerchantElement {
   constructor() {
     super();
     this.userId = null;
+    this.workingBranchId = null;
     this.dense = true;
     this.heading = "Your permissions";
     this.showDescriptions = true;
+    this.expanded = false;
     this.user = null;
     this.coverage = [];
     this.grants = [];
@@ -123,8 +144,62 @@ export class MerchantUserPermissionsView extends MerchantElement {
     });
   }
 
+  // The branch the card is currently about, or null when showing the whole profile.
+  get workingBranch() {
+    if (this.workingBranchId == null) return null;
+    return (
+      this.coverage.find((c) => Number(c.branch_id) === Number(this.workingBranchId)) ?? null
+    );
+  }
+
+  get isScoped() {
+    return this.workingBranchId != null;
+  }
+
+  // Scoped, the coverage list is one branch — which is what makes renderPermission drop the
+  // "where" line and the density toggle disappear. Neither needed a special case.
+  //
+  // Scoped to a branch the user does NOT cover, both lists are empty rather than falling
+  // back to the whole profile. Silently widening to every branch would answer a question
+  // nobody asked, and would tell someone standing at a branch they have no access to that
+  // they hold fifteen permissions.
+  get scopedCoverage() {
+    if (!this.isScoped) return this.coverage;
+    const branch = this.workingBranch;
+    return branch ? [branch] : [];
+  }
+
+  get scopedGrants() {
+    if (!this.isScoped) return this.grants;
+    if (!this.workingBranch) return [];
+    return this.grants.filter((g) => Number(g.branch_id) === Number(this.workingBranchId));
+  }
+
   get categories() {
-    return groupGrants({ grants: this.grants, coverage: this.coverage, dense: this.dense });
+    return groupGrants({
+      grants: this.scopedGrants,
+      coverage: this.scopedCoverage,
+      dense: this.dense,
+    });
+  }
+
+  // Other branches, grouped by what the user can actually do at each.
+  get otherBranchGroups() {
+    if (!this.isScoped) return [];
+    return groupBranchesByAccess({
+      grants: this.grants,
+      coverage: this.coverage,
+      workingBranchId: this.workingBranchId,
+    });
+  }
+
+  toggleExpanded() {
+    this.expanded = !this.expanded;
+    this.emit("merchant-user-permissions-expanded", {
+      userId: this.userId,
+      workingBranchId: this.workingBranchId,
+      expanded: this.expanded,
+    });
   }
 
   toggleDense() {
@@ -155,7 +230,7 @@ export class MerchantUserPermissionsView extends MerchantElement {
     // Someone at one branch does not need "Chester" repeated down every row — it is in the
     // header and it cannot be anywhere else. Drop the whole list when that leaves nothing to
     // say, so an unlimited permission at a single branch is just its name.
-    const showWhere = this.coverage.length > 1;
+    const showWhere = this.scopedCoverage.length > 1;
     const scopes = showWhere || permission.isLimited ? permission.variants : [];
 
     return html`
@@ -202,9 +277,17 @@ export class MerchantUserPermissionsView extends MerchantElement {
 
   renderHeader() {
     const u = this.user;
-    const held = new Set(this.grants.map((g) => g.permission_id)).size;
+    // Scoped, the count must be what applies HERE. "15 of 15 permissions" while standing at
+    // a branch where only 3 of them work would be the same class of lie as the old
+    // working-branch notice.
+    const held = new Set(this.scopedGrants.map((g) => g.permission_id)).size;
     const total = this.catalogue.length;
+    const working = this.workingBranch;
     const home = this.coverage.find((c) => Number(c.is_default) === 1);
+    // Scoped to a branch they do not cover, falling back to their home branch would print
+    // "Chester" above a body saying they have no access — two answers to one question.
+    const denied = this.isScoped && !working;
+    const place = denied ? null : (working ?? home);
 
     return html`
       <header part="header" class="flex flex-wrap items-start justify-between gap-2">
@@ -222,17 +305,24 @@ export class MerchantUserPermissionsView extends MerchantElement {
             <span class="font-mono text-xs font-normal opacity-70">(${u.username})</span>
           </p>
           <p class="text-xs text-slate-500 dark:text-slate-400">
-            ${home?.role_name ?? u.role_name ?? "No role"} ·
-            ${home ? `${home.branch_code} — ${home.branch_name}` : "no default branch"}
-            ${this.coverage.length > 1
+            ${place?.role_name ?? u.role_name ?? "No role"} ·
+            ${denied
+              ? html`<span class="text-red-700 dark:text-red-400">not one of your branches</span>`
+              : place
+                ? `${place.branch_code} — ${place.branch_name}`
+                : "no default branch"}
+            ${working && Number(working.is_default) !== 1
+              ? html` · <span class="text-sky-700 dark:text-sky-300">not your default</span>`
+              : nothing}
+            ${!this.isScoped && this.coverage.length > 1
               ? html` · ${this.coverage.length} branches`
               : nothing}
           </p>
           <p class="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            ${held} of ${total} permissions
+            ${held} of ${total} permissions${this.isScoped ? " here" : ""}
           </p>
         </div>
-        ${isCollapsible(this.coverage)
+        ${isCollapsible(this.scopedCoverage)
           ? html`
               <label
                 part="dense-toggle"
@@ -249,6 +339,76 @@ export class MerchantUserPermissionsView extends MerchantElement {
             `
           : nothing}
       </header>
+    `;
+  }
+
+  // One group per distinct set of access, not one per branch. A group identical to the
+  // working branch is named and left at that — repeating fifteen identical permissions
+  // under a Warrington heading answers nothing the words "same as here" do not.
+  renderOtherBranchGroup(group) {
+    const working = this.workingBranch;
+    const count = group.permissionCount;
+
+    return html`
+      <section part="other-branch" class="border-t border-slate-200 pt-2 dark:border-slate-800">
+        <p class="flex flex-wrap items-baseline gap-x-2 text-xs">
+          <span class="font-medium text-slate-900 dark:text-slate-100">${group.where}</span>
+          ${group.sameAsWorking
+            ? html`<span class="text-slate-500 dark:text-slate-400"
+                >— same as ${working.branch_name}</span
+              >`
+            : html`<span class="text-slate-500 dark:text-slate-400"
+                >— ${count} of ${this.catalogue.length} permissions</span
+              >`}
+        </p>
+        ${group.sameAsWorking
+          ? nothing
+          : count === 0
+            ? html`<p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Nothing — you cannot work from
+                ${group.branchIds.length === 1 ? "this branch" : "these branches"}.
+              </p>`
+            : html`<div class="mt-1.5 space-y-2">
+                ${groupGrants({
+                  grants: group.grants,
+                  // One branch's worth of shape, so rows render without a "where" line.
+                  coverage: [this.coverage.find((c) => Number(c.branch_id) === group.branchIds[0])],
+                  dense: true,
+                }).map((c) => this.renderCategory(c))}
+              </div>`}
+      </section>
+    `;
+  }
+
+  renderOtherBranches() {
+    const groups = this.otherBranchGroups;
+    if (!this.isScoped || !groups.length) return nothing;
+
+    const branchCount = groups.reduce((n, g) => n + g.branchIds.length, 0);
+
+    return html`
+      <div part="other-branches" class="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+        <button
+          part="expand"
+          type="button"
+          aria-expanded=${this.expanded ? "true" : "false"}
+          class="flex w-full items-center justify-between gap-2 text-left text-xs font-medium
+                 text-sky-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2
+                 focus-visible:outline-accent dark:text-sky-300"
+          @click=${() => this.toggleExpanded()}
+        >
+          <span>
+            You also have permissions at ${branchCount}
+            ${branchCount === 1 ? "other branch" : "other branches"}
+          </span>
+          <span aria-hidden="true">${this.expanded ? "Hide" : "Show"}</span>
+        </button>
+        ${this.expanded
+          ? html`<div class="mt-2 space-y-2">
+              ${groups.map((g) => this.renderOtherBranchGroup(g))}
+            </div>`
+          : nothing}
+      </div>
     `;
   }
 
@@ -272,9 +432,14 @@ export class MerchantUserPermissionsView extends MerchantElement {
 
         ${categories.length
           ? html`<div class="mt-3 space-y-3">${categories.map((c) => this.renderCategory(c))}</div>`
-          : html`<p part="empty" class="mt-3 text-sm text-slate-500 dark:text-slate-400">
-              This account holds no permissions. Speak to your branch manager.
-            </p>`}
+          : this.isScoped && !this.workingBranch
+            ? html`<p part="empty" class="mt-3 text-sm font-medium text-red-700 dark:text-red-400">
+                You have no permissions at this branch and cannot work from it.
+              </p>`
+            : html`<p part="empty" class="mt-3 text-sm text-slate-500 dark:text-slate-400">
+                This account holds no permissions. Speak to your branch manager.
+              </p>`}
+        ${this.renderOtherBranches()}
         ${anyLimited
           ? html`<p
               part="legend"

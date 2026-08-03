@@ -57,20 +57,66 @@ export function getAppUser(userId) {
   );
 }
 
-// Branches this user may operate from, plus their default.
+// Branches this user may operate from, resolved from the permission model.
 //
-// TODAY every user gets the whole network (optionally narrowed by `codes`), because the
-// dataset has no user→branch access table: all 175 app_user rows carry exactly one
-// default_branch_id and nothing else. A sales desk rep covering Liverpool and Manchester
-// cannot be expressed yet. When the matrix lands this function joins to it and `codes`
-// stops being load-bearing — the component above does not change.
+// This is the seam docs/plan.md §7.7 said `allowedCodes` would stop being load-bearing at,
+// now that the matrix has landed in datagenerator2. The list comes from app_user_branch —
+// coverage — rather than from the whole network, so a Purchasing user covering four
+// branches is offered four, not twenty-nine.
+//
+// `permission_count` is what lets the component tell "valid branch" from "you cannot work
+// here". Coverage and grants agree in the generated data (no orphan rows either way), but
+// the count is the honest test: the question is whether the user can *do* anything at that
+// branch, not whether a coverage row happens to exist.
+const SELECT_USER_BRANCH = `
+  select b.id, b.code, b.name,
+         b.address_1, b.address_2, b.address_3, b.postcode,
+         b.telephone, b.email, b.branch_type,
+         b.region_id,
+         rg.code as region_code,
+         -- Head Office has no region; without a label it lands in an "Unassigned" group.
+         coalesce(rg.name, case when b.branch_type = 'head_office'
+                                then 'Head office' else 'Unassigned' end) as region_name,
+         ub.is_default,
+         r.code as role_code, r.role as role_name,
+         (select count(*) from app_user_permission up
+           where up.app_user_id = ub.app_user_id
+             and up.branch_id   = ub.branch_id) as permission_count
+    from app_user_branch ub
+    join branch b   on b.id = ub.branch_id
+    join app_role r on r.id = ub.app_role_id
+    left join region rg on rg.id = b.region_id`;
+
 export function listBranchesForUser(userId, { codes } = {}) {
   const user = getAppUser(userId);
-  const branches = listBranches({ codes });
+  if (!user.row) {
+    return { user: null, rows: [], total: 0, tookMs: user.tookMs, plan: [], warnings: [] };
+  }
+
+  const params = [userId];
+  let where = ` where ub.app_user_id = ?1`;
+  if (codes?.length) {
+    const placeholders = codes.map((_, i) => `?${i + 2}`).join(", ");
+    params.push(...codes);
+    where += ` and b.code in (${placeholders})`;
+  }
+
+  const branches = measured(
+    "branches.forUser" + (codes?.length ? "+codes" : ""),
+    // Region NULL (Head Office) sorts last rather than first.
+    `${SELECT_USER_BRANCH}${where} order by (b.region_id is null), region_name, b.code`,
+    params,
+  );
+
+  // app_user_branch.is_default is authoritative; app_user.default_branch_id is the
+  // denormalised fast path, and the two are required to agree (requirements-permissions.md
+  // invariant 7). Prefer coverage, falling back only when `codes` filtered the default out.
+  const defaultRow = branches.rows.find((b) => b.is_default);
+
   return {
     user: user.row,
-    defaultBranchId: user.row?.default_branch_id ?? null,
-    permittedFrom: codes?.length ? "codes" : "all-branches",
+    defaultBranchId: defaultRow?.id ?? user.row.default_branch_id ?? null,
+    permittedFrom: codes?.length ? "coverage+codes" : "coverage",
     ...branches,
     query: "branches.forUser",
     tookMs: Number((user.tookMs + branches.tookMs).toFixed(2)),

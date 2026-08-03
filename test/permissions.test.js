@@ -9,6 +9,8 @@ import {
   joinList,
   categoryLabel,
   isCollapsible,
+  grantSignature,
+  groupBranchesByAccess,
 } from "../src/components/shared/permissions.js";
 import { getUserPermissions } from "../server/queries/permissions.js";
 import { db } from "../server/db.js";
@@ -41,6 +43,17 @@ test("describeBranches: full coverage collapses to a count", () => {
 test("describeBranches: two branches are named, not counted", () => {
   // "All 2 branches" is longer than saying which two.
   expect(describeBranches([1, 2], NW.slice(0, 2))).toBe("Chester and Warrington");
+});
+
+test("describeBranches: a partly-covered region is named, not called whole", () => {
+  // Nigel Dodds covers 2 of the Midlands' 3 branches. "All 2 Midlands branches" would state
+  // something false about the network, so the branches are named instead.
+  const midlands = [
+    { branch_id: 16, branch_code: "42", branch_name: "Birmingham", region_id: 5, region_name: "Midlands", region_branch_count: 3 },
+    { branch_id: 17, branch_code: "43", branch_name: "Northampton", region_id: 5, region_name: "Midlands", region_branch_count: 3 },
+    { branch_id: 18, branch_code: "51", branch_name: "North London", region_id: 6, region_name: "London", region_branch_count: 4 },
+  ];
+  expect(describeBranches([16, 17], midlands)).toBe("Birmingham and Northampton");
 });
 
 test("describeBranches: a region beats an exception when the phrase stays tidy", () => {
@@ -209,6 +222,77 @@ test("a threshold is only ever shown against a limited permission", () => {
         ).toBe(true);
       }
     }
+  }
+});
+
+// --- the working-branch scoping added at v0.2.0 -----------------------------------------
+
+test("grantSignature separates permission and limit, and ignores order", () => {
+  const a = [grant(1, 51, 150000, "01", "Chester", 1, "North West"), grant(1, 1, null, "01", "Chester", 1, "North West")];
+  const b = [grant(2, 1, null, "02", "Warrington", 1, "North West"), grant(2, 51, 150000, "02", "Warrington", 1, "North West")];
+  // Same access at two branches — order of rows must not make them look different.
+  expect(grantSignature(a)).toBe(grantSignature(b));
+
+  // Same permission, lower limit, is different access and must not collapse.
+  const c = [grant(3, 1, null, "03", "Stockport", 1, "North West"), grant(3, 51, 50000, "03", "Stockport", 1, "North West")];
+  expect(grantSignature(c)).not.toBe(grantSignature(a));
+});
+
+test("groupBranchesByAccess excludes the working branch and flags identical ones", () => {
+  const coverage = NW.map((c, i) => ({ ...c, is_default: i === 0 ? 1 : 0 }));
+  const grants = [
+    grant(1, 1, null, "01", "Chester", 1, "North West"),
+    grant(1, 51, 150000, "01", "Chester", 1, "North West"),
+    grant(2, 1, null, "02", "Warrington", 1, "North West"),
+    grant(2, 51, 150000, "02", "Warrington", 1, "North West"),
+    grant(3, 1, null, "03", "Stockport", 1, "North West"),
+  ];
+
+  const groups = groupBranchesByAccess({ grants, coverage, workingBranchId: 1 });
+
+  expect(groups.map((g) => g.branchIds)).toEqual([[2], [3]]);
+  expect(groups[0].sameAsWorking).toBe(true);
+  expect(groups[1].sameAsWorking).toBe(false);
+  expect(groups[1].permissionCount).toBe(1);
+});
+
+test("groupBranchesByAccess collapses the head office user's 29 branches", () => {
+  // The case the grouping exists for: one section per branch would render 28 near-identical
+  // blocks. No user in the dataset has more than a handful of distinct permission sets.
+  const biggest = db
+    .query("select app_user_id as id from app_user_permission group by app_user_id order by count(*) desc limit 1")
+    .get();
+  const { coverage, grants } = getUserPermissions(biggest.id);
+  const working = coverage.find((c) => Number(c.is_default) === 1) ?? coverage[0];
+
+  const groups = groupBranchesByAccess({ grants, coverage, workingBranchId: working.branch_id });
+
+  expect(coverage.length).toBeGreaterThan(20);
+  expect(groups.length).toBeLessThanOrEqual(5);
+  // Every other branch is accounted for exactly once.
+  expect(groups.reduce((n, g) => n + g.branchIds.length, 0)).toBe(coverage.length - 1);
+  expect(groups.every((g) => !g.branchIds.includes(working.branch_id))).toBe(true);
+  // Ordering: identical-to-working first.
+  const flagged = groups.map((g) => g.sameAsWorking);
+  expect(flagged.slice().sort((a, b) => Number(b) - Number(a))).toEqual(flagged);
+});
+
+test("every multi-branch user groups into fewer sections than branches, or equal", () => {
+  const users = db
+    .query("select app_user_id as id from app_user_branch group by app_user_id having count(*) > 1")
+    .all();
+  expect(users.length).toBeGreaterThan(0);
+
+  for (const { id } of users) {
+    const { coverage, grants } = getUserPermissions(id);
+    const working = coverage.find((c) => Number(c.is_default) === 1) ?? coverage[0];
+    const groups = groupBranchesByAccess({ grants, coverage, workingBranchId: working.branch_id });
+
+    expect(groups.length, `user ${id} groups`).toBeLessThanOrEqual(coverage.length - 1);
+    expect(
+      groups.reduce((n, g) => n + g.branchIds.length, 0),
+      `user ${id} branches accounted for`,
+    ).toBe(coverage.length - 1);
   }
 });
 

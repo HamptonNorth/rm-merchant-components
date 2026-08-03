@@ -28,6 +28,11 @@ const SELECT_COVERAGE = `
   select ub.branch_id, ub.is_default,
          b.code as branch_code, b.name as branch_name, b.branch_type,
          b.region_id, rg.name as region_name,
+         -- How many branches the region really has, which is not the same as how many of
+         -- them this user covers. Without it, someone covering 2 of the 3 Midlands branches
+         -- gets described as holding "all 2 Midlands branches", which reads as though the
+         -- Midlands had two.
+         (select count(*) from branch b2 where b2.region_id = b.region_id) as region_branch_count,
          r.code as role_code, r.role as role_name, r.approval_rank
     from app_user_branch ub
     join branch b on b.id = ub.branch_id

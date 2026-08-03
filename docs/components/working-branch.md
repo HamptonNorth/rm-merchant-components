@@ -2,7 +2,7 @@
 
 `<merchant-working-branch>` — which branch is this member of staff operating from?
 
-## Current version: 0.1.0
+## Current version: 0.2.0
 
 John Smith signs in at the Warrington counter and the system sets him to Warrington,
 because that is his `app_user.default_branch_id`. A sales desk rep covering Liverpool and
@@ -47,13 +47,40 @@ document.querySelector("merchant-working-branch")
 
 | Event | Detail | When |
 |---|---|---|
-| `merchant-working-branch-changed` | `{ id, code, name, isDefault, userId, cause }` | On preselect and on change. |
+| `merchant-working-branch-changed` | `{ id, code, name, isDefault, access, permissionCount, userId, cause }` | On preselect and on change. |
+
+`access` is `"default"`, `"permitted"` or `"denied"` — see Access states below.
 
 `cause` is `"default"` when the component preselected on load, `"user"` when a person
 chose. A host persisting working context should generally only write on `"user"`.
 
 Auto-selection only fires when the user's default branch is actually in the permitted
 list — a rep whose default branch was revoked is not silently placed there.
+
+## Access states
+
+The notice under the control reports how the **selected** branch stands for this user,
+tested on whether they hold any permissions there:
+
+| `access` | Condition | Message | Tone |
+|---|---|---|---|
+| `default` | Their own branch | "Your default branch — 15 permissions here." | muted |
+| `permitted` | Permissions held, but not their base | "Valid working branch, not your default (Chester) — 3 permissions here." | informational |
+| `denied` | No permissions at all | "No permissions at this branch — you cannot work from here." | warning |
+
+**Being away from your default branch is not a warning.** For anyone covering more than one
+branch it is the ordinary case — a rep at Warrington instead of Chester is working, not
+doing something irregular. Warning on it trains people to ignore the warning, so only
+`denied` is styled as one.
+
+The permission count is shown because coverage is not uniform: the same user can hold 15
+permissions at their own branch and 3 at another. "Valid working branch" on its own would
+hide that, in the same way that flagging every non-default branch hid the real problem.
+
+`denied` cannot be reached through the dropdown, which only lists covered branches. It
+arises when a host sets `selectedId` to something else — a working branch restored from a
+stale session, or access revoked since. The select then shows a disabled "Branch not
+available to you" entry so the control and the message agree.
 
 ## Behaviour
 
@@ -70,26 +97,55 @@ list ever outgrows a select, this becomes a combobox — a change confined to th
 
 ## Security
 
-`allowedCodes` is a **display filter, not authorisation** — it arrives from the browser.
-Real permissions must be resolved server-side from the session user once the
-role × user × branch matrix exists (docs/plan.md §7.7). `listBranchesForUser()` in
-`server/queries/branches.js` is the single seam that change goes through; no component
-change is needed.
+The branch list is resolved **server-side** from `app_user_branch`, so it is no longer
+merely cosmetic. `allowedCodes` remains a display filter that can only narrow that list
+further — it arrives from the browser and grants nothing.
+
+What the component shows is still an affordance, not an authorisation boundary: the server
+must re-check permissions on every write. A `denied` notice tells someone they cannot work
+at a branch; it does not stop anything.
 
 ## Data
 
-`app_user` joined to `app_role` and `branch`, plus the branch list. Served by
-`GET /api/app-users/:id/branches?codes=`. Today every user is permitted every branch
-because the dataset has no user→branch access table — all 175 `app_user` rows carry
-exactly one `default_branch_id` and nothing else.
+`app_user_branch` joined to `branch`, `app_role` and `region`, with a per-branch grant count
+from `app_user_permission`. Served by `GET /api/app-users/:id/branches?codes=`, returning
+`permission_count` per row plus `defaultBranchId` and `permittedFrom`.
+
+`app_user_branch.is_default` is authoritative for the default branch;
+`app_user.default_branch_id` is the denormalised fast path and the two must agree
+(`docs/requirements-permissions.md` invariant 7). The component falls back to the latter
+only when `allowedCodes` has filtered the default branch out of the list.
+
+Head Office (`branch_type = 'head_office'`) has no region, so it is grouped under a "Head
+office" optgroup and sorted last rather than landing in "Unassigned".
 
 ## Styling
 
 Parts: `root`, `heading`, `select`, `notice`, `user`, `loading`, `empty`, `error`.
+The notice also carries a state part — `access-default`, `access-permitted` or
+`access-denied` — so a host can restyle a single state.
 Custom properties: `--merchant-accent`, `--merchant-radius`, `--merchant-font`.
 Dark mode follows `data-theme="dark"` on the element or any ancestor.
 
 ## Changelog
+
+### 0.2.0 — 2026-08-03
+
+Uses the permission model that landed in datagenerator2.
+
+`listBranchesForUser()` now resolves the list from `app_user_branch` instead of returning
+the whole network — the seam plan §7.7 said would close when the matrix arrived. A
+Purchasing user covering four branches is offered four, not twenty-nine.
+
+Replaced the "Not your default branch" warning with a three-state access notice keyed on
+whether the user holds any permissions at the selected branch. The old message fired on
+every non-default branch, which for anyone covering more than one is the ordinary case, and
+said nothing about whether they could actually work there. Added `access` and
+`permissionCount` to the event detail, and `access-*` parts for styling.
+
+Reworded the unknown-codes notice from "Unknown branch code" to "Not among your branches",
+since a code can now be absent because the user has no coverage there rather than because
+it does not exist.
 
 ### 0.1.0 — 2026-08-01
 
