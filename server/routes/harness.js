@@ -162,6 +162,45 @@ const SCENARIOS = [
     props: (row) => ({ userId: row.id, allowedCodes: null, selectedId: null }),
   },
 
+  // find-customer — the four routes, plus the case widening exists for.
+  {
+    id: "find-busiest-branch",
+    component: "find-customer",
+    label: "Busiest branch (3,600+ customers)",
+    resolve: () =>
+      db.query(`select home_branch_id as id, count(*) n from customer
+                 group by 1 order by n desc limit 1`).get(),
+    props: (row) => ({ workingBranchId: row.id, scope: "branch" }),
+  },
+  {
+    id: "find-smallest-branch",
+    component: "find-customer",
+    label: "Smallest branch — where widening earns its keep",
+    // Newtown holds ~90 customers against Stockport's 3,600. A counter here reaches for the
+    // widen control constantly, which is why branch_neighbour is curated rather than derived.
+    resolve: () =>
+      db.query(`select c.home_branch_id as id, count(*) n from customer c
+                 join branch b on b.id = c.home_branch_id
+                where b.branch_type = 'trading' group by 1 order by n asc limit 1`).get(),
+    props: (row) => ({ workingBranchId: row.id, scope: "branch" }),
+  },
+  {
+    id: "find-quick-codes",
+    component: "find-customer",
+    label: "Branch with a full 1-9 keypad",
+    resolve: () =>
+      db.query(`select branch_id as id, count(*) n from branch_quick_code
+                 group by 1 order by n desc limit 1`).get(),
+    props: (row) => ({ workingBranchId: row.id, scope: "branch" }),
+  },
+  {
+    id: "find-already-widened",
+    component: "find-customer",
+    label: "Already widened to neighbours",
+    resolve: () => db.query(`select branch_id as id from branch_neighbour order by branch_id limit 1`).get(),
+    props: (row) => ({ workingBranchId: row.id, scope: "neighbours" }),
+  },
+
   // user-permissions-view — the four shapes the card has to survive, smallest to largest.
   {
     id: "perms-counter",

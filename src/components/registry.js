@@ -61,13 +61,14 @@ export const components = [
     tag: "merchant-find-customer",
     title: "Find customer",
     version: "0.1.0",
-    status: "planned",
+    status: "ready",
     phase: 1,
     group: "Customer",
     description:
-      "Debounced type-ahead over name, account code, postcode and town, filtered by branch, status and account type.",
-    dataDeps: ["customer", "branch", "sales_rep"],
-    events: ["merchant-customer-selected"],
+      "One trade-counter box, routed by what is typed: 1\u20139 for a branch quick code, an account-code prefix, a postcode, or a name. Scoped to the working branch with national accounts always included, and a widen control that steps out to neighbouring branches then the whole network.",
+    dataDeps: ["customer", "customer_fts", "branch_quick_code", "branch_neighbour", "branch"],
+    module: "/src/components/find-customer/find-customer.js",
+    events: ["merchant-customer-selected", "merchant-customer-search-widened"],
   },
   {
     id: "credit-status",

@@ -59,6 +59,11 @@ export function createApi({ base = "" } = {}) {
     // What this member of staff may do, and where. One call: identity, coverage, grants.
     getUserPermissions: ({ userId } = {}) => get(`/api/app-users/${userId}/permissions`),
 
+    // Trade-counter customer search. `scope` is branch | neighbours | all.
+    searchCustomers: ({ term, branchId, scope, limit } = {}) =>
+      get("/api/customers", { q: term, branch: branchId, scope, limit }),
+    listQuickCodes: ({ branchId } = {}) => get("/api/customers/quick-codes", { branch: branchId }),
+
     listScenarios: ({ component } = {}) => get("/api/harness/scenarios", { component }),
     dataset: () => get("/api/harness/dataset"),
   };
