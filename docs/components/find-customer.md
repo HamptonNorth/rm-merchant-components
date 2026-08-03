@@ -14,7 +14,7 @@ so it routes on what was typed rather than making anyone pick a search mode firs
 | a single digit `1`–`9` | that branch's quick code — one cash account | `1` → *Cash Sale — Stockport* |
 | the dataset's account-code shape | account code prefix | `CA/000` |
 | 3+ chars starting letter(s) then a digit | postcode, **and** name | `SK4`, `SK4 1`, `SK41DR` |
-| 4+ chars otherwise | name | `arrowsmith` |
+| 4+ chars otherwise | name — every token must match | `arrowsmith`, `gate build` |
 
 **Routing happens server-side.** The account-code shape is a property of the dataset, not of
 the UI: datagenerator2 emits `9999999`, `XX/999999`, `XX/9999999` or `XXX/999999` from
@@ -23,7 +23,31 @@ and matches nothing under another. The server infers the shape from sampled `acc
 values, so a regeneration with a different format needs no change here.
 `GET /api/customers/search-shape` reports what it inferred.
 
-Three points where the behaviour is deliberately not the obvious thing:
+### Name search matches part-words, in any order
+
+Every whitespace-separated token has to appear somewhere in the name, independently:
+
+| Typed | Finds |
+|---|---|
+| `gate build` | Gates Building Services · Bathgate Building Services |
+| `build gate` | the same — order does not matter |
+| `gates bui` | Gates Building Services |
+
+So there is no need to type whole words, or to get them in the right order. Trigram FTS
+matches substrings, and the tokens are ANDed.
+
+Two details behind that:
+
+- **Tokens shorter than three characters go to `LIKE` rather than being dropped.** Trigram
+  cannot index below three, and `j smith` should still mean the name contains a j.
+- **The search is column-scoped to `name`.** The FTS table also indexes town, and without the
+  filter `gate` matches Gateshead — every builder in Gateshead came back for a search plainly
+  about a company name.
+
+Names containing the term exactly as typed sort first, so `gates building` puts the literal
+match above one that merely holds both tokens somewhere.
+
+Three further points where the behaviour is deliberately not the obvious thing:
 
 - **A postcode-looking term searches names too**, not instead. "A1 Plumbing" starts like a
   postcode but is somebody's trading name. Postcode hits lead; name hits follow; each row

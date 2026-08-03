@@ -155,19 +155,57 @@ function postcodeSearch(term, branchIds, limit) {
   );
 }
 
-// Name goes through FTS. Trigram matches substrings, so this returns what LIKE '%…%' used
-// to — the phrase quoting is what makes a multi-word term match across the space.
+// Name goes through FTS. Trigram matches substrings, so each token finds a partial word.
+//
+// Every whitespace-separated token is required, independently and in any order: "gate build"
+// finds "Gates Building Services", and so does "build gate". Sending the whole term as one
+// phrase — which this did at first — looks for the literal string "gate build", which is not
+// in that name, so the customer appeared not to exist.
+//
+// Scoped to `name:` because the FTS table also indexes town, and without the column filter
+// "gate" matches Gateshead — every builder in Gateshead came back for a search that was
+// plainly about a company name.
+function nameQuery(term) {
+  const tokens = term.trim().split(/\s+/).filter(Boolean);
+  return {
+    // Trigram cannot match below three characters, so shorter tokens go to LIKE instead of
+    // being dropped — "j smith" should still mean the name contains a j.
+    long: tokens.filter((t) => t.length >= 3),
+    short: tokens.filter((t) => t.length < 3),
+  };
+}
+
 function nameSearch(term, branchIds, limit) {
-  const phrase = `"${term.trim().replace(/"/g, '""')}"`;
-  const params = [phrase];
+  const { long, short } = nameQuery(term);
+  if (!long.length && !short.length) return measured("customers.name", `${SELECT_CUSTOMER} where 0`, []);
+
+  const params = [];
+  const where = [];
+  let join = "";
+
+  if (long.length) {
+    params.push(long.map((t) => `name:"${t.replace(/"/g, '""')}"`).join(" "));
+    join = " join customer_fts f on f.rowid = c.id";
+    where.push(`customer_fts match ?${params.length}`);
+  }
+  for (const token of short) {
+    params.push(`%${token}%`);
+    where.push(`c.name like ?${params.length}`);
+  }
+
   const scope = scopeClause(branchIds, params);
+  // Names containing the term as typed lead: searching "gates building" should put the
+  // literal match above one that merely holds both tokens somewhere.
+  params.push(term.trim());
+  const fullTerm = params.length;
   params.push(limit);
+
   return measured(
     "customers.name",
-    `${SELECT_CUSTOMER}
-       join customer_fts f on f.rowid = c.id
-      where customer_fts match ?1${scope}
-      order by c.name limit ?${params.length}`,
+    `${SELECT_CUSTOMER}${join}
+      where ${where.join(" and ")}${scope}
+      order by (instr(lower(c.name), lower(?${fullTerm})) > 0) desc, c.name
+      limit ?${params.length}`,
     params,
   );
 }

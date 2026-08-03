@@ -157,3 +157,56 @@ test("a postcode typed without its space still matches", () => {
   expect(withSpace.rows.length).toBeGreaterThan(0);
   expect(without.rows.length, `${squashed} should find what ${row.postcode} finds`).toBeGreaterThan(0);
 });
+
+test("every typed token must appear in the name, in any order", () => {
+  // "gate build" has to find "Gates Building Services". Sending the whole term as one FTS
+  // phrase looks for the literal string "gate build", which is not in that name, so the
+  // customer appeared not to exist.
+  const target = db.query(
+    `select name, home_branch_id from customer
+      where lower(name) like '%gate%' and lower(name) like '%build%' limit 1`).get();
+  if (!target) return;
+
+  const found = (term) =>
+    searchCustomers({ term, workingBranchId: target.home_branch_id, scope: "all", limit: 50 })
+      .rows.some((r) => r.name === target.name);
+
+  expect(found("gate build"), "partial tokens").toBe(true);
+  expect(found("build gate"), "order must not matter").toBe(true);
+});
+
+test("a name search does not match on town", () => {
+  // The FTS table indexes name and town. Without a name: column filter, searching "gate"
+  // returns every builder in Gateshead — noise for a search plainly about a company name.
+  const town = db.query(
+    `select town from customer where town <> '' group by town
+      having count(*) > 20 order by count(*) desc limit 1`).get();
+  const branch = db.query(
+    `select home_branch_id id from customer where town = ?1 limit 1`).get(town.town);
+
+  const result = searchCustomers({
+    term: town.town,
+    workingBranchId: branch.id,
+    scope: "all",
+    limit: 50,
+  });
+  for (const row of result.rows) {
+    if (row.matched_on !== "name") continue;
+    expect(
+      row.name.toLowerCase().includes(town.town.toLowerCase().slice(0, 4)),
+      `${row.name} matched on name but the term is the town ${town.town}`,
+    ).toBe(true);
+  }
+});
+
+test("tokens shorter than three characters still constrain the search", () => {
+  // Trigram cannot index below three characters, so a short token goes to LIKE rather than
+  // being dropped — "j smith" must still mean the name contains a j.
+  const result = searchCustomers({ term: "j smith", workingBranchId: 1, scope: "all", limit: 25 });
+  expect(result.rows.length).toBeGreaterThan(0);
+  for (const row of result.rows) {
+    const n = row.name.toLowerCase();
+    expect(n.includes("smith"), row.name).toBe(true);
+    expect(n.includes("j"), row.name).toBe(true);
+  }
+});
