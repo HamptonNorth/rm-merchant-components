@@ -675,6 +675,29 @@ pseudo-branch, or an explicit `customer.ownership_type` enum (`branch` / `region
 `head_office`). Worth deciding before credit-status renders "owned by", because that
 component states who holds the credit relationship.
 
+### 7.9 Customer search: indexes and FTS
+
+Detail and DDL in [`requirements-customer-search.md`](requirements-customer-search.md) §3.
+Two findings worth keeping here because both contradict what this plan said earlier.
+
+**`COLLATE NOCASE` is load-bearing.** `LIKE` is case-insensitive by default, so SQLite can
+only use an index to serve a prefix `LIKE` when the index carries that collation. A plain
+`customer(postcode)` index — which §7.2 originally asked for — leaves the plan on `SCAN` and
+saves nothing measurable. With `NOCASE`, `postcode LIKE 'SK4%'` goes 0.77 ms → **0.02 ms**
+and `account_code LIKE 'CA/00272%'` 2.22 ms → **0.01 ms**.
+
+**The unfiltered-scan cost was overstated.** This plan quoted 23.7 ms for an unanchored name
+search. That was a cold one-shot reading — first-touch I/O against a 100 MB file, paid once —
+not steady state. Warm, at 39k rows, the worst case is ~2.9 ms, and the worst case is a term
+matching *nothing* rather than a common one, because `LIMIT 25` lets a popular term exit
+early.
+
+That correction changes the FTS argument. At 39k rows FTS is unnecessary. At ~394k rows the
+same scan is 25.3 ms, and branch filtering only reaches 9.1 ms, while trigram FTS stays at
+0.01 ms at both sizes. So FTS is justified by the customer count being configurable and real
+merchants holding hundreds of thousands of accounts — not by anything measurable today. It
+is worth doing while the schema is open rather than retrofitted later.
+
 ## 8. Build order
 
 Each phase ends with something runnable.
@@ -735,10 +758,54 @@ change scope, and neither blocks Phase 0–2.
 
 Each entry: what it does · key data · what it emits.
 
-1. **Find customer** `v0.1.0` — debounced type-ahead over name / account code / postcode /
-   town, with branch, status and account-type filters; result rows show account code, name,
-   town, home branch, and an `on stop` flag. · `customer` (+`branch`, `sales_rep`) ·
-   `merchant-customer-selected { id, accountCode, name }`.
+1. **Find customer** `v0.1.0` — one text box at the trade counter, routed by what is typed.
+   Requires `branch_quick_code` and `branch_neighbour`
+   ([`requirements-customer-search.md`](requirements-customer-search.md)).
+
+   | Input | Route |
+   |---|---|
+   | a single digit `1`–`9` | that branch's quick code → one cash account, immediately |
+   | matches the dataset's account-code shape | account code prefix |
+   | 4+ characters starting letter(s) then a digit | postcode, then name |
+   | 4+ characters otherwise | name |
+
+   **The account-code shape is derived from the data, never hardcoded.** datagenerator2
+   emits one of four formats from `account_code_format`, and they do not share a pattern:
+   `9999999` (1), `XX/999999` (2), `XX/9999999` (3, current), `XXX/999999` (4). A rule keyed
+   on "two letters then a slash" silently stops matching under format 4 and matches nothing
+   at all under format 1, which has neither letters nor a slash — and under format 1 a
+   numeric term is an account code rather than a name.
+
+   So **routing happens server-side**, against a shape inferred from sampled `account_code`
+   values at startup: all-digits of length *n*, or *k* letters then `/` then *n* digits.
+   Inference beats reading a recorded setting here, because a long-lived dataset can hold
+   more than one format after a change of convention, and matching both patterns at once is
+   then the correct behaviour rather than an error. The component posts the raw term and
+   gets back rows plus the route that matched; it never needs to know the format.
+
+   Single-digit input stays a quick code under every format — the numeric format is seven
+   digits, so length disambiguates.
+
+   Scoped to the **working branch** by default. That is the business rule, and it also keeps
+   the query cheap, though less dramatically than an earlier draft of this plan claimed —
+   see §7.9. **National accounts are always included** regardless of branch: 53 customers
+   across 20 branches, and per §0 they are not really branch-owned at all.
+
+   A **widen** control adds the branches in `branch_neighbour`, then all branches on a
+   second press. Each result says which branch owns it, and widened results are marked as
+   coming from outside the working branch — a Chester counter needs to see at a glance that
+   this customer is on Bangor's books. Widening matters most where the region map helps
+   least: Newtown holds 91 customers and Bangor 244, against Stockport's 3,635.
+
+   Rows carry account code, name, town, postcode, owning branch, `cash`/`credit`, and an
+   `on stop` flag — 613 customers are on stop, and releasing goods to one is the mistake the
+   flag exists to prevent. · `customer`, `branch_quick_code`, `branch_neighbour`, `branch` ·
+   `merchant-customer-selected { id, accountCode, name, accountType, isNationalAccount,
+   homeBranchId, matchedOn }`.
+
+   `matchedOn` (`quick_code` / `account_code` / `postcode` / `name`) travels with the
+   selection because the order flow behaves differently after a quick code — that is a
+   counter cash sale, already decided — than after a name search.
 
 2. **Select delivery address for customer** `v0.1.0` — addresses for a customer, archived
    hidden by default, showing project reference, unload method, delivery instructions,

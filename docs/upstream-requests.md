@@ -93,6 +93,25 @@ permissions; and whether permission id 5 is a deliberate gap.
 
 ---
 
+## 1b. Counter quick codes and branch neighbours
+
+**→ Full spec: [`requirements-customer-search.md`](requirements-customer-search.md)**
+
+**Status:** agreed 2026-08-03. Blocks two of find-customer's four search routes; the
+postcode/name/account-code search works without it.
+
+Two small tables plus 28 counter cash accounts:
+
+- `branch_quick_code` — digit 1–9 **per branch** → a cash account, so a single keystroke
+  reaches the everyday account and takings attribute to the branch that made the sale.
+- `branch_neighbour` — curated, 2–4 per branch, for the widen control. Deriving it from
+  `region_id` would defeat the point: Cardiff and Bristol are 45 minutes apart across a
+  regional boundary, and Stockport and Sheffield are 40 miles apart with the Peak District
+  between them. Twelve of 28 branches have a neighbour outside their own region.
+
+Until they land, find-customer searches the working branch and widens straight to all
+branches, skipping the neighbour step.
+
 ## 2. Indexes — [plan §7.2](plan.md)
 
 **Status:** one measured, the rest proposed. The dataset ships with no explicit indexes
@@ -117,7 +136,9 @@ Build cost 260 ms; file size unchanged. The trailing `transaction_date` also sat
 Also wanted:
 
 ```sql
-customer(name), customer(account_code), customer(postcode), customer(home_branch_id)
+customer(home_branch_id)
+customer(postcode    COLLATE NOCASE)   -- NOCASE or a prefix LIKE will not use it
+customer(account_code COLLATE NOCASE)  -- ditto
 customer_contact(customer_id)
 customer_delivery_address(customer_id)
 product(name), product(product_group_id), product(default_supplier_id)
@@ -125,8 +146,11 @@ product_price(product_id)
 branch(region_id)
 ```
 
-FTS5 over `customer` and `product` names is **not** needed yet — `LIKE` over 39k customers
-measures ~1 ms.
+`customer(name)` is deliberately absent: no B-tree serves an unanchored `LIKE '%…%'`.
+That is the FTS5 case — **trigram** tokenizer, so results match `LIKE` exactly. See
+[`requirements-customer-search.md`](requirements-customer-search.md) §3 for the measurements
+and DDL. Justified by scale rather than by today: 2.9 ms at 39k rows, 25.3 ms at 394k, and
+0.01 ms with FTS at either size.
 
 ---
 
