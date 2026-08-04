@@ -211,24 +211,144 @@ half is free once the punctuation half is being done.
 
 ---
 
-## 3. Stock — [plan §7.1](plan.md)
+## 2c. Interchange codes and buying currency (cXML punchout)
 
-**Status:** blocking two components (`stock-check`, `multi-branch-stock`), which are built
-against a fixture provider until this lands.
+**Status:** decided 2026-08-04, not blocking. Wanted before a catalogue is exposed to a
+buyer's procurement system; find-product and product-detail do not depend on it.
 
-No table links product to branch. Proposed `stock`: `product_id`, `branch_id`,
-`is_stocked_item`, `on_hand_qty`, `allocated_qty`, `on_order_qty`, `on_order_eta`,
-`min_qty`, `max_qty`, `reorder_qty`, `bin_location`, `last_counted_at`, `updated_at`;
-unique on `(product_id, branch_id)`. Roughly 30–50k rows if branches stock a realistic
-subset of the 3,714 products rather than the full 103,992 cross-product.
+For cXML punchout these are interface requirements rather than refinements — Ariba and Coupa
+validate `UnitOfMeasure` against UN/ECE Rec 20, `Money` carries an ISO 4217 attribute, and a
+buyer's spend analytics and approval routing key off the UNSPSC `Classification`. Without
+them a punchout either rejects or lands as unclassified spend.
 
-Needs deciding: **tally products** (27 of them) carry per-length tallies, and real stock for
-those is a quantity *per length*. Recommendation is an aggregate quantity now and a
-`stock_tally_line` child table later, so the components are not held up.
+```sql
+unit_of_measure.unece_code   TEXT   -- UN/ECE Rec 20: EA, MTR, KGM, MTK, TNE, LTR, BG, RO...
+product_group.unspsc_code    TEXT   -- 91 leaf groups to map; an afternoon, not a project
+supplier.currency_code       TEXT NOT NULL DEFAULT 'GBP'   -- ISO 4217
+```
 
-Realism matters here more than elsewhere: some products out of stock everywhere, some at
-one branch only, some below reorder level, some with `allocated > on_hand`. Flat random
-data makes every component look the same.
+**The UOM mapping is not one-to-one, and that is the part worth knowing before scoping it.**
+`unit_of_measure` conflates the physical unit with the pricing denominator — the divisor
+spread is `[1, 2, 10, 12, 20, 100, 336, 400, 500, 1000]`, where 336 is a brick pallet and 12
+a dozen. UN/ECE codes the unit only; it has nothing for "priced per 336". Six of the 26 rows
+therefore map to `EA` and are separated solely by `divisor`. The existing `divisor` column
+already carries what is needed as the price basis, so the model can express it — but a
+lookup table alone cannot, and assuming otherwise is the way this gets underestimated.
+
+### Currency applies to buying only
+
+Decided: **every selling transaction is GBP.** Customers, aged debt, selling prices and
+credit limits stay as they are — integer pence, GBP implied — and need no change. Currency
+enters only on the buying side, where timber comes from Scandinavia, hardwoods from Canada,
+the USA and Africa, and bricks from Turkey.
+
+### Three buying models, run simultaneously
+
+Which model applies is a property of the **supplier relationship**, not a company-wide
+setting: a merchant buys Toolstation in GBP, a Swedish mill in SEK, and Canadian hardwood
+through its own buying department, all at once.
+
+| # | Model | FX borne by | Schema today |
+|---|---|---|---|
+| 1 | Direct import, priced in the supplier's currency | the merchant | not expressible — `supplier` has no currency |
+| 2 | Import agent quotes an agreed GBP price | the agent | **the only one supported**; all 26 suppliers are this |
+| 3 | Internal overseas buying department — the branch orders in GBP, specialists handle procurement and accounting | the group, centrally | not expressible — no internal-supplier concept |
+
+Model 1 needs `supplier.currency_code` and currency-carrying purchase orders. Model 3 needs
+something new: a supplier that is **internal**, representing central buying rather than an
+outside trading entity.
+
+Two pieces of model 3 already exist and fit:
+
+- **Head Office is already a branch** (`branch_type = 'head_office'`, id 29), which is where
+  a central buying department belongs.
+- **`raise_purchase_order` versus `raise_purchase_order_any_supplier`** already encodes "you
+  may only buy from the default supplier". For an imported line whose default supplier *is*
+  the internal buying department, that permission is precisely the control that keeps a
+  branch from going direct to the mill. The mechanism is in place; only the supplier type is
+  missing.
+
+Suggested: `supplier.supplier_type` (`external` | `internal`) plus a nullable
+`supplier.branch_id` pointing at Head Office for internal ones. `product.default_supplier_id`
+then points at the internal buyer for lines the branch may not source itself, and
+`allow_direct_ex_works` (already set on 437 products) keeps its meaning of shipping from the
+mill straight to site.
+
+### Transfer price is not landed cost
+
+The point most likely to be discovered late, and the one with a business consequence.
+
+Under model 3 the branch is charged a **transfer price**, which central buying may set above
+actual landed cost — to cover its own costs, or to absorb FX variance so branches see a
+stable GBP figure. So two different numbers exist for the same timber:
+
+| number | drives |
+|---|---|
+| what the branch was charged (GBP transfer price) | branch margin, and the branch manager's figures |
+| what the group actually paid (SEK, converted) | group margin, and what finance reconciles |
+
+`product.last_cost_pence` and `weighted_average_cost_pence` currently hold one number. Under
+models 1 and 2 that is unambiguous. Under model 3 it is not, and storing only one means one
+of the two margin reports is quietly wrong — which surfaces as a branch manager's figures
+disagreeing with finance and nobody able to say which is right.
+
+`product.last_cost_pence` and `weighted_average_cost_pence` **stay GBP** and that is correct:
+they are landed cost after conversion, not transaction amounts. Recorded so nobody later
+"fixes" them into supplier currency.
+
+When purchase-order and supplier-invoice tables are built, each money row should carry
+**three** things, not two:
+
+| | why |
+|---|---|
+| amount in the supplier's currency | reconciling their invoice means matching the figure they sent |
+| the exchange rate applied | must be the rate used *at the time* |
+| the GBP equivalent | costing, margin and reporting |
+
+Storing the foreign amount plus a rate *table* and recomputing later is the classic mistake:
+rates move, a historical purchase order then reconciles differently than it did, and the
+difference surfaces as unexplained pennies in cost.
+
+**Data gap:** all 26 suppliers are UK, including the three named as importers (Anglian
+Plywood Importers, Baltic Softwood Supplies, Northgate Timber Importers). Nothing exercises
+foreign-currency buying. A few overseas suppliers with non-GBP `currency_code` — a Swedish
+sawmill, a Turkish brickworks, a Canadian hardwood mill — would make it testable.
+
+---
+
+## 3. Stock, sourcing and inter-branch supply
+
+**→ Full spec: [`requirements-stock-sourcing.md`](requirements-stock-sourcing.md)**
+
+**Status:** blocking `stock-check` and `multi-branch-stock`, which are built against a
+fixture provider until this lands.
+
+No table links product to branch. Beyond the obvious quantities, working through it showed
+that **cost, replenishment route and supplier all vary by branch too**, and the schema holds
+each of them once per product:
+
+- `stock` per `(product, branch)` — quantities, **and** `last_cost_pence` /
+  `weighted_average_cost_pence`, because branch 5 buys girders well and my branch does not.
+- `replenish_method` per `(product, branch)` — from a supplier depot, direct to site, always
+  IBT'd from a nominated branch, or machined to order at one. A made-to-order product with
+  zero on hand everywhere is not out of stock, and without the route the component says it is.
+- `product_supplier` many-to-many with a preference order, `supplier_location` depots under a
+  single settlement account, and `branch_accreditation` — because a branch without the
+  accreditation cannot buy direct from the manufacturer and structurally pays more.
+
+It also now covers **product compliance** — FSC/PEFC chain of custody, which currently lives
+as a substring in 237 product names, hazardous-goods documentation for the 19 chemical,
+paint, sealant and cement groups, and age-restricted supply of bladed articles and
+corrosives. Note that `is_residential` is already computed on the `address_pool` staging
+table and discarded when it is dropped; corrosives cannot be delivered to residential
+premises, so it needs carrying through to `customer_delivery_address`. Both need the same two halves: the fact on the product, and
+an auditable record of what was issued to which customer and when. Holding a safety data
+sheet is not the obligation; issuing it, and re-issuing it on revision, is.
+
+Generation realism matters more here than elsewhere: at least one **specialist branch**
+stocking a whole category for the others to IBT from, some products out of stock everywhere,
+some below reorder, some with `allocated > on_hand`. Flat data makes every component look
+identical.
 
 ---
 

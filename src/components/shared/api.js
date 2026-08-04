@@ -72,6 +72,10 @@ export function createApi({ base = "" } = {}) {
     listDeliveryAddresses: ({ customerId, includeArchived } = {}) =>
       get(`/api/customers/${customerId}/delivery-addresses`, { includeArchived: includeArchived ? 1 : "" }),
 
+    // What a quantity input needs: unit-of-measure config, price tiers, tally lengths.
+    getQtyConfig: ({ productId } = {}) => get(`/api/products/${productId}/qty-config`),
+    listTallies: () => get("/api/products/tallies"),
+
     listScenarios: ({ component } = {}) => get("/api/harness/scenarios", { component }),
     dataset: () => get("/api/harness/dataset"),
   };

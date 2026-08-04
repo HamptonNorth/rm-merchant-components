@@ -99,6 +99,20 @@ export const components = [
     events: ["merchant-delivery-address-selected"],
   },
   {
+    id: "qty-input",
+    tag: "merchant-qty-input",
+    title: "Quantity input",
+    version: "0.1.0",
+    status: "ready",
+    phase: 2,
+    group: "Product",
+    description:
+      "How much, in the units the trade uses. Five entry modes \u2014 units, packs and pallets, sheets by count or area, a fixed timber tally, and hardwood measured parcel by parcel \u2014 all resolving to one priced quantity. This is where packaged ERP stops.",
+    dataDeps: ["product", "product_price", "unit_of_measure", "tally"],
+    module: "/src/components/qty-input/qty-input.js",
+    events: ["merchant-qty-changed"],
+  },
+  {
     id: "product-detail",
     tag: "merchant-product-detail",
     title: "Show product details",

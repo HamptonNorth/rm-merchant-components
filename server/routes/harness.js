@@ -200,6 +200,48 @@ const SCENARIOS = [
     props: (row) => ({ customerId: row.id, selectedId: null }),
   },
 
+  // qty-input — the five entry modes. Three have no backing data, so they are driven by
+  // explicit props rather than by a product that happens to be configured that way.
+  {
+    id: "qty-unit",
+    component: "qty-input",
+    label: "Units — 6 bolts at £2.50",
+    resolve: () => db.query(`select id from product where uom_type='unit' and qty_per_pallet <= 1 order by id limit 1`).get(),
+    props: (row) => ({ productId: row.id, tallyLengths: null, packSize: null }),
+  },
+  {
+    id: "qty-pack",
+    component: "qty-input",
+    label: "Pallet of 366 — no price row uses a divisor, so packSize is set",
+    resolve: () => db.query(`select id from product where uom_type='unit' order by id limit 1`).get(),
+    props: (row) => ({ productId: row.id, packSize: 366, tallyLengths: null }),
+  },
+  {
+    id: "qty-sheet",
+    component: "qty-input",
+    label: "Sheet material — priced per sheet or per 10m²",
+    resolve: () => db.query(`select id from product where uom_type='sheet_material' order by id limit 1`).get(),
+    props: (row) => ({ productId: row.id, tallyLengths: null, packSize: null }),
+  },
+  {
+    id: "qty-tally-fixed",
+    component: "qty-input",
+    label: "Fixed tally — C16 CLS lengths",
+    // product.tally_id is 0 for all 3,714 products, so the list comes from the tally table
+    // directly. Without this the mode cannot be demonstrated at all.
+    resolve: () => db.query(`select (select id from product where uom_type='tally' order by id limit 1) as id,
+                                    (select tally from tally where id = 1) as lengths`).get(),
+    props: (row) => ({ productId: row.id, tallyLengths: row.lengths.split(",").map(Number), packSize: null }),
+  },
+  {
+    id: "qty-tally-hardwood",
+    component: "qty-input",
+    label: "Hardwood — random width, measured parcel by parcel",
+    resolve: () => db.query(`select id from product where uom_type='tally' and name like '%Oak%' order by id limit 1`).get()
+              ?? db.query(`select id from product where uom_type='tally' order by id limit 1`).get(),
+    props: (row) => ({ productId: row.id, tallyLengths: null, packSize: null }),
+  },
+
   // credit-status — the verdicts that change what a counter hand does.
   {
     id: "credit-ok",
