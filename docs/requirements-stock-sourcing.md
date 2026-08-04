@@ -28,11 +28,19 @@ blocking anything yet, but it decides what the stock components are able to say.
 against a fixture provider until this lands.
 
 No table links product to branch. Proposed `stock`: `product_id`, `branch_id`,
-`is_stocked_item`, `on_hand_qty`, `allocated_qty`, `on_order_qty`, `on_order_eta`,
+`on_hand_qty`, `allocated_qty`, `on_order_qty`, `on_order_eta`,
 `min_qty`, `max_qty`, `reorder_qty`, `bin_location`, `last_counted_at`, `updated_at`,
 **`last_cost_pence`, `weighted_average_cost_pence`**;
 unique on `(product_id, branch_id)`. Roughly 30–50k rows if branches stock a realistic
 subset of the 3,714 products rather than the full 103,992 cross-product.
+
+> **`is_stocked_item` has moved** to `product_branch.status` — see
+> [`requirements-product-ranging.md`](requirements-product-ranging.md). Whether a branch
+> carries a line is a merchandising decision reviewed occasionally; what it holds today is
+> inventory state changing continuously, and the two were split so `find-product` is not
+> blocked behind this whole model. `is_stocked_item = 0` becomes `status = 'non_stock'`.
+> There is deliberately **no foreign key** from `stock` to `product_branch`: residual stock
+> of a delisted line is a real state.
 
 ### Cost belongs here, not on `product`
 
@@ -61,8 +69,8 @@ The transfer-price problem from §2c again, one level down and far more common. 
   IBTs items in as they sell them, so for that category the IBT *is* the normal supply route.
 
 **The specialist branch is already expressible** with the fields above: it carries
-`is_stocked_item = 1` across the category with real `min_qty`/`max_qty`, while the other 19
-branches hold `is_stocked_item = 0` — obtainable, not held. Generation should produce at
+`product_branch.status = 'stocked'` across the category with real `min_qty`/`max_qty`, while
+the other 19 branches hold `'non_stock'` — obtainable, not held. Generation should produce at
 least one such branch, or `multi-branch-stock` has nothing interesting to show and the whole
 component looks pointless.
 

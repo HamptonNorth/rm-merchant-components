@@ -17,3 +17,16 @@ A manually maintained list of functionality that must eventually be part of the 
 - [ ] Formated email for get ready for collection
 - [ ] Call off order
 - [ ] Cut sheets and optimisation
+- [ ] Specials - add using product templates. Auto creation `based on`
+- [ ] Toolbank - catalogue integration
+- [ ] EDI
+- [ ] Support for PunchOut supply https://gemini.google.com/app/46d73155b6c8173e and https://docs.google.com/document/d/1NeAAryf-7Wv_F2tpMKSFuyZ5b5jvU_l0Uvav8P3v93Q/edit?usp=sharing
+- [ ] Support for the two dominant global standards that govern how cart data is structured and transferred back into a procurement system are cXML (Commerce XML) and SAP OCI (Open Catalog Interface).
+- [ ] Customer project costing
+- [ ] Collection note/invoice printing
+- [ ] Receipt printing and deposit handling
+- [ ] Invoice archiving, user reprint of invoices/statements/what do I owe
+- [ ] Invoice in disute system
+- [ ] Interfacing to accounts 3rd aprty sales ledger, credtors and nominal
+- [ ] Conversion/import - products and customers
+- [ ] Free delivery - orders ove £x and/or with 20 miles stuff

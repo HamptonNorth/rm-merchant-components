@@ -316,6 +316,65 @@ sawmill, a Turkish brickworks, a Canadian hardwood mill — would make it testab
 
 ---
 
+## 2d. Product ranging — which branches carry which lines
+
+**→ Full spec: [`requirements-product-ranging.md`](requirements-product-ranging.md)** — DDL,
+generation rules, verification queries and the measurements behind the shape.
+
+**Status:** agreed 2026-08-04, **blocking `find-product`**. The prerequisite half of §3
+below, split out because it is small and §3 is not: ranging is a three-column table, while
+`stock` is the whole inventory model. Separated, `find-product` proceeds without waiting.
+
+Nothing links product to branch, so a search can only offer every product at every branch —
+wrong the first time someone searches for a line their branch has never carried. One sparse
+table fixes it:
+
+```sql
+CREATE TABLE product_branch (
+  product_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('core','stocked','non_stock','not_permitted')),
+  ranged_at TEXT,
+  PRIMARY KEY (product_id, branch_id)
+);
+CREATE INDEX ix_product_branch_branch ON product_branch(branch_id, product_id);
+```
+
+The parts most likely to be got wrong:
+
+- **Absence is the "not stocked" state and must not be stored.** Storing the negative costs
+  3.17M rows saying "no" at large-merchant scale, and a second place for the truth to drift.
+  Absence means *not ranged but still sellable*, as a special order.
+- **Core is a status on the row, not a flag on `product`.** A product-level flag breaks on
+  the first exception — the specialist branch carrying no core timber — and then needs an
+  exception table. It also conflates a national merchandising decision with a per-branch
+  service level.
+- **`not_permitted` is the one negative that earns a row**, because it has to beat the
+  special-order default: the branch with no accreditation, or age-restricted lines where
+  there is no process to check ID.
+- **`non_stock` is today's `stock.is_stocked_item = 0`** — sold here, never held. Kept
+  because it changes search ordering, which absence cannot express.
+- **This replaces `stock.is_stocked_item`**, which moves here. Nothing else on `stock`
+  changes, and the specialist-branch design in §3 is unaffected.
+- **No FK from `stock` to `product_branch`.** Residual stock of a delisted line is real.
+
+Measured at 25,000 products × 150 branches: **579,844 rows, 11.4 MB** — 15.5% of the full
+matrix, every query at or under 0.06 ms. Both index directions are needed;
+`(branch_id, product_id)` alone leaves "which branches stock this product" at 9 ms, which is
+`multi-branch-stock`'s whole job.
+
+A trial run over the real product and branch tables measured **42,659 rows** across the
+**28 trading branches** — head office (`branch_type = 'head_office'`) gets no ranging rows,
+it sells nothing — consistent with §3's existing "roughly 30–50k rows" estimate. The DDL and
+all five verification queries in the spec were run against it.
+
+One generation rule is easy to get backwards: **designate the ranged-nowhere tail before
+ranging anything, not after.** With 28 branches each drawing ~800 of 3,714 products
+independently, almost nothing survives unranged and the tail disappears — and that tail is
+the special-order path. Target 15–25% *measured*; a trial designating 20% came out at 29.3%,
+because group-biased ranging strands products on top of the designated set.
+
+---
+
 ## 3. Stock, sourcing and inter-branch supply
 
 **→ Full spec: [`requirements-stock-sourcing.md`](requirements-stock-sourcing.md)**

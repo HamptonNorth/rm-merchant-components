@@ -321,7 +321,7 @@ Nothing in the current schema links product to branch. Proposed, following `NAMI
 | `last_cost_pence` / `weighted_average_cost_pence` | money | **cost is per branch** — branch 5 buys girders well, my branch does not. See upstream-requests §3 |
 | `replenish_method` | text | `supplier` / `supplier_direct` / `ibt` / `made_to_order` / `not_stocked` — per branch, since the specialist branch buys what the others transfer in |
 | `source_branch_id` / `supplier_location_id` / `lead_time_days` | int | who supplies this branch, and how long it takes. Decides whether zero on hand means "out of stock" or "made to order, 5 days" |
-| `is_stocked_item` | bool | false = obtainable but not held |
+| ~~`is_stocked_item`~~ | — | **moved** to `product_branch.status` (`non_stock` = obtainable but not held). Ranging is a merchandising decision, stock is inventory state; splitting them unblocks `find-product` ahead of this table. See upstream-requests §2d |
 | `on_hand_qty` | decimal | |
 | `allocated_qty` | decimal | free = on_hand − allocated |
 | `on_order_qty` | decimal | |
