@@ -130,13 +130,14 @@ export const components = [
     tag: "merchant-find-product",
     title: "Find product(s)",
     version: "0.1.0",
-    status: "planned",
+    status: "ready",
     phase: 2,
     group: "Product",
     description:
-      "Search by code, name or barcode, faceted by product-group subtree, supplier and unit-of-measure type.",
-    dataDeps: ["product", "product_group", "supplier"],
-    events: ["merchant-products-selected"],
+      "One box taking a code, a name or a scanned barcode, searched against what this branch actually ranges. Every result says whether it can be sold from here now, obtained per order, fetched from another branch, special-ordered, or not sold here at all — a hit that does not say which is worse than no hit.",
+    dataDeps: ["product", "product_branch", "product_group", "supplier", "product_price", "unit_of_measure"],
+    module: "/src/components/find-product/find-product.js",
+    events: ["merchant-product-selected", "merchant-product-search-widened"],
   },
   {
     id: "find-supplier",

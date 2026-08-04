@@ -55,6 +55,24 @@ export const flows = [
         },
       },
       {
+        component: "find-product",
+        note: "What are they buying?",
+        needs: ["workingBranchId"],
+        // Scoped to the working branch, so the search answers "can I sell this from here"
+        // rather than "does the company sell this" — the counter's question, not head
+        // office's. Collapsed on select for the same reason as find-customer above.
+        props: (ctx) => ({ workingBranchId: ctx.workingBranchId, collapseOnSelect: true, limit: 10 }),
+        emits: {
+          "merchant-product-selected": (d) => ({
+            productId: d.product.id,
+            productCode: d.product.code,
+            productName: d.product.name,
+            productAvailability: d.availability,
+            productRangedBranches: d.product.ranged_branches,
+          }),
+        },
+      },
+      {
         component: "delivery-address",
         note: "Where is it going? (skip for a collect)",
         needs: ["customerId"],
@@ -128,6 +146,23 @@ export function flowWarnings(ctx) {
         `${ctx.customerName ?? "This customer"} is owned by another branch. ` +
         `Their pricing and credit relationship sits there, not at ${ctx.workingBranchName ?? "this branch"}.`,
     });
+  }
+
+  // A counter customer is standing at the desk expecting to leave with the goods. Neither
+  // component can see this alone: find-product knows the line is not held here, and only the
+  // flow knows nobody has chosen a delivery address, which is what makes it a collection.
+  if (ctx.productAvailability && ctx.productAvailability !== "held" && !ctx.deliveryAddressId) {
+    const where = {
+      to_order: "is sold here but never held — it has to be brought in",
+      elsewhere: `is not ranged here — ${ctx.productRangedBranches ?? "other"} branches carry it`,
+      special_order: "is ranged nowhere — it is a special order from the supplier",
+    }[ctx.productAvailability];
+    if (where) {
+      out.push({
+        level: "warn",
+        text: `${ctx.productName ?? "This product"} ${where}. A collection customer cannot take it today.`,
+      });
+    }
   }
 
   if (ctx.customerAccountType === "cash" && ctx.deliveryAddressId) {

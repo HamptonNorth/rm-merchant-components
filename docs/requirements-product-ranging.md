@@ -2,8 +2,9 @@
 
 **For:** `datagenerator2` · **Raised by:** rm-merchant-components · **Date:** 2026-08-04
 
-**Status:** blocking `find-product`. Wanted before that component is built, so it is
-developed against real ranging data rather than showing every product at every branch.
+**Status:** **built and generated, 2026-08-04.** `product_branch` holds 47,704 rows over the
+28 trading branches. `find-product` is unblocked; the figures below are from the shipped
+generator unless marked otherwise.
 
 Split out of [`requirements-stock-sourcing.md`](requirements-stock-sourcing.md), where the
 concept already exists as `stock.is_stocked_item`. This document promotes it to its own
@@ -28,15 +29,23 @@ status column. The third is the absence of a row and must never be stored.**
 
 ```sql
 CREATE TABLE product_branch (
-  product_id INTEGER NOT NULL,
-  branch_id  INTEGER NOT NULL,
-  status     TEXT NOT NULL CHECK (status IN
-               ('core','stocked','non_stock','not_permitted')),
-  ranged_at  TEXT,
-  PRIMARY KEY (product_id, branch_id)
+  id         INTEGER PRIMARY KEY,
+  product_id INTEGER,
+  branch_id  INTEGER,
+  status     TEXT NOT NULL,   -- core | stocked | non_stock | not_permitted
+  ranged_at  TEXT
 );
-CREATE INDEX ix_product_branch_branch ON product_branch(branch_id, product_id);
+CREATE UNIQUE INDEX ux_product_branch      ON product_branch(product_id, branch_id);
+CREATE INDEX        ix_product_branch_branch ON product_branch(branch_id, product_id);
 ```
+
+Surrogate `id` plus a unique index on the natural key, rather than a composite primary key:
+that is what every other junction table here does (`branch_quick_code`,
+`app_user_permission`), and the Stage-2 replicate step renders column specs per dialect with
+no composite-PK support. The unique index supplies the `(product_id, branch_id)` direction
+anyway, so the measured behaviour is identical. `status` is plain `text` despite NAMING.md
+rule 8 — the DDL renderer emits no `CHECK` for any table, and this is not the place to
+change that; the generator is the only writer and enforces the four values.
 
 | status | means | counter can |
 |---|---|---|
@@ -129,8 +138,12 @@ everywhere plus ~2,400 branch-specific each.
 | range size for a branch | 9.40 ms | 0.05 ms | 0.05 ms |
 
 `find-product` reads the table by branch; `multi-branch-stock` reads it by product. Indexing
-only the first leaves the second doing a full scan at 9 ms — the composite primary key above
-supplies that direction free, and `ix_product_branch_branch` supplies the other.
+only the first leaves the second doing a full scan at 9 ms — `ux_product_branch` supplies
+that direction, `ix_product_branch_branch` the other.
+
+Confirmed against the generated 47,704 rows: "which branches carry this product" plans as
+`SEARCH pb USING COVERING INDEX ux_product_branch` at 0.010 ms, and a branch-scoped name
+search with status ordering runs at 0.586 ms.
 
 The table is small enough that this is settled: no core shortcut is needed to keep it down,
 and adding `non_stock` rows for whole categories has ample headroom.
@@ -161,14 +174,16 @@ Order matters, and rule 1 is the one that is easy to get wrong:
 5. **A handful of `not_permitted`**, tied to the accreditation and age-restriction models —
    enough to exercise the blocked path at a few branches, not enough to be the common case.
 
-**Expect the measured tail to exceed the designated figure.** Group-biased ranging strands
-additional products at no branch — a trial run designating 20% measured **29.3%** ranged
-nowhere. Aim for 15–25% *measured* and tune the designated figure down to hit it, rather
-than trusting the input number.
+**Check the measured tail, do not assume it matches the designated figure.** How far it
+drifts depends entirely on how concentrated the group bias is. The shipped generator
+(`ranging_special_order_pct = 14`, off-favoured acceptance 0.3) measures **13.9%** — no
+meaningful drift. An early trial with a much harder bias designated 20% and measured 29.3%,
+because strong concentration strands whole groups at no branch. Generation logs the measured
+figure every run and warns outside a 10–30% band.
 
-Trial run over the real product and branch tables, following the rules above:
-**42,659 rows**, 1,351–1,650 ranged per branch, core present at all 28 — consistent with the
-"roughly 30–50k rows" estimate already in the stock requirement.
+**As generated:** 47,704 rows, 1,475–1,914 lines per branch, 517 products (13.9%) ranged
+nowhere, specialist branch Leeds over product group 560 — within the "roughly 30–50k rows"
+estimate already in the stock requirement.
 
 `ranged_at` is a date; it is only there so "recently ranged" is answerable and can be null.
 

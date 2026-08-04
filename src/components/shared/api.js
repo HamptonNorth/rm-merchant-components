@@ -72,6 +72,16 @@ export function createApi({ base = "" } = {}) {
     listDeliveryAddresses: ({ customerId, includeArchived } = {}) =>
       get(`/api/customers/${customerId}/delivery-addresses`, { includeArchived: includeArchived ? 1 : "" }),
 
+    // Catalogue search as seen from one branch. `scope` is branch | all — every row reports
+    // its availability at that branch either way, which is what makes widening worth doing.
+    searchProducts: ({ term, branchId, scope, groupPath, supplierId, limit } = {}) =>
+      get("/api/products", {
+        q: term, branch: branchId, scope, group: groupPath, supplier: supplierId, limit,
+      }),
+    listProductGroups: ({ branchId } = {}) => get("/api/products/groups", { branch: branchId }),
+    listProductSuppliers: ({ branchId } = {}) => get("/api/products/suppliers", { branch: branchId }),
+    getRangeSummary: ({ branchId } = {}) => get("/api/products/range-summary", { branch: branchId }),
+
     // What a quantity input needs: unit-of-measure config, price tiers, tally lengths.
     getQtyConfig: ({ productId } = {}) => get(`/api/products/${productId}/qty-config`),
     listTallies: () => get("/api/products/tallies"),

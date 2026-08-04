@@ -321,9 +321,10 @@ sawmill, a Turkish brickworks, a Canadian hardwood mill — would make it testab
 **→ Full spec: [`requirements-product-ranging.md`](requirements-product-ranging.md)** — DDL,
 generation rules, verification queries and the measurements behind the shape.
 
-**Status:** agreed 2026-08-04, **blocking `find-product`**. The prerequisite half of §3
-below, split out because it is small and §3 is not: ranging is a three-column table, while
-`stock` is the whole inventory model. Separated, `find-product` proceeds without waiting.
+**Status:** **built and generated, 2026-08-04** — `product_branch`, 47,704 rows. The
+prerequisite half of §3 below, split out because it is small and §3 is not: ranging is a
+three-column table, while `stock` is the whole inventory model. Separating them let
+`find-product` proceed without waiting for the inventory model.
 
 Nothing links product to branch, so a search can only offer every product at every branch —
 wrong the first time someone searches for a line their branch has never carried. One sparse
@@ -331,12 +332,12 @@ table fixes it:
 
 ```sql
 CREATE TABLE product_branch (
-  product_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('core','stocked','non_stock','not_permitted')),
-  ranged_at TEXT,
-  PRIMARY KEY (product_id, branch_id)
+  id INTEGER PRIMARY KEY, product_id INTEGER, branch_id INTEGER,
+  status TEXT NOT NULL,   -- core | stocked | non_stock | not_permitted
+  ranged_at TEXT
 );
-CREATE INDEX ix_product_branch_branch ON product_branch(branch_id, product_id);
+CREATE UNIQUE INDEX ux_product_branch        ON product_branch(product_id, branch_id);
+CREATE INDEX        ix_product_branch_branch ON product_branch(branch_id, product_id);
 ```
 
 The parts most likely to be got wrong:
@@ -370,8 +371,23 @@ all five verification queries in the spec were run against it.
 One generation rule is easy to get backwards: **designate the ranged-nowhere tail before
 ranging anything, not after.** With 28 branches each drawing ~800 of 3,714 products
 independently, almost nothing survives unranged and the tail disappears — and that tail is
-the special-order path. Target 15–25% *measured*; a trial designating 20% came out at 29.3%,
-because group-biased ranging strands products on top of the designated set.
+the special-order path. How far the measured figure drifts above the designated one depends
+on how hard the group bias is: the shipped settings measure 13.9% against a designated 14%,
+while an early trial with a much harder bias designated 20% and measured 29.3%. Generation
+logs it every run and warns outside a 10–30% band.
+
+**Data gap, same component: barcodes are 5% populated.** 185 of 3,714 products carry a
+`barcode_inner`, and `barcode_outer` and `barcode_pallet` are empty on every row.
+`find-product` searches by code, name **or barcode**, and scanning at the counter is an
+everyday workflow, so that route cannot be exercised. Generation change only — the columns
+exist. Outer and pallet barcodes matter separately from inner: scanning a shrink-wrapped
+pack should find the pack, not the piece.
+
+**No product FTS is needed** — noting it so it does not get built by analogy with
+`customer_fts`. Unindexed `LIKE` scans over all 3,714 products measure 0.01–0.35 ms, and
+extrapolate to ~2.3 ms at a 25,000-product catalogue. FTS earned its place at 39,452
+customers; the catalogue is an order of magnitude smaller. `product_group.path` is already
+a materialised path (`Top.Timber.Joinery.Sawn`), so subtree faceting needs nothing either.
 
 ---
 

@@ -875,10 +875,16 @@ Each entry: what it does · key data · what it emits.
    apart. Auto-selection only fires when the default branch is actually in the permitted
    list, so a rep whose default was revoked is not silently placed there.
 
-5. **Find product(s)** `v0.1.0` — search by code / name / barcode, faceted by product-group
-   subtree (`path LIKE`), supplier and UOM type; multi-select mode for order building. ·
-   `product`, `product_group`, `supplier` ·
-   `merchant-products-selected { ids }`.
+5. **Find product(s)** `v0.1.0` *(built)* — one box taking a code, a name or a scanned
+   barcode, searched against **what this branch ranges** rather than the whole catalogue.
+   Every result carries one of five availability states — in range, to order, other branches,
+   special order, not permitted — because a hit that does not say which invites someone to
+   promise stock the yard has never carried. `not_permitted` is shown greyed and refuses
+   selection rather than being hidden. Faceted by product-group subtree (`path LIKE`);
+   supplier and UOM facets deferred. Price always shown with its unit, since 266 products
+   change unit between tiers. · `product`, `product_branch`, `product_group`, `supplier`,
+   `product_price`, `unit_of_measure` ·
+   `merchant-product-selected { product, availability, branchId, scope }`.
 
 6. **Show details for product** `v0.1.0` — full card: identity and barcodes, group
    breadcrumb from the materialised path, dimensions/weight, pack quantities, the price
