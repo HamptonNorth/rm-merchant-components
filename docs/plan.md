@@ -165,8 +165,15 @@ a host application injects its own backend later.
 
 - `bun:sqlite` opened `{ readonly: true }`, one long-lived handle, prepared statements
   cached per query module.
-- DB path from `MERCHANT_DB_PATH`, defaulting to
-  `../datagenerator2/out/datagenerator.db`. Fail loudly with a clear message if absent.
+- DB path resolved in order: `MERCHANT_DB_PATH`, then the `sqlite_path` datagenerator2 is
+  configured to write (read from its `datagenerator.env`, so its config change follows
+  through here), then `../datagenerator2/out/datagenerator.db`, then a local
+  `./data/datagenerator.db`. Fail loudly with a clear message if none exists, listing
+  everywhere that was looked. The dataset is consumed in place — copying it into this
+  project only creates a second file that goes stale invisibly, so an unused copy in
+  `./data` is called out at startup and on the harness index. Startup also reports which
+  source won and how old the file is: "I regenerated and nothing changed" is nearly always
+  a stale dataset.
 - Pence stays pence over the wire; formatting is the component's job.
 - Every list endpoint: `q`, `limit` (default 25, max 100), `offset`, and returns
   `{ rows, total, tookMs }`. `tookMs` is displayed in the harness request log.

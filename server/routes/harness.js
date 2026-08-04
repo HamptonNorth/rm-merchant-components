@@ -4,7 +4,7 @@
 // datagenerator2 regenerating the dataset with different ids (docs/plan.md §6).
 
 import { Hono } from "hono";
-import { db, dbPath } from "../db.js";
+import { db, dbPath, dbSource, dbGeneratedAt, unusedLocalCopy } from "../db.js";
 
 export const harness = new Hono();
 
@@ -529,5 +529,13 @@ harness.get("/dataset", (c) => {
   const explicitIndexes = db
     .query("select count(*) as c from sqlite_master where type='index' and sql is not null")
     .get().c;
-  return c.json({ dbPath, counts, explicitIndexes, hasIndexes: explicitIndexes > 0 });
+  return c.json({
+    dbPath,
+    dbSource,
+    generatedAt: dbGeneratedAt.toISOString(),
+    unusedLocalCopy,
+    counts,
+    explicitIndexes,
+    hasIndexes: explicitIndexes > 0,
+  });
 });

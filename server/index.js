@@ -2,7 +2,7 @@
 // with --hot.
 
 import { app } from "./app.js";
-import { dbPath, db } from "./db.js";
+import { dbPath, dbSource, dbGeneratedAt, unusedLocalCopy, db } from "./db.js";
 import { existsSync } from "node:fs";
 
 const port = Number(process.env.PORT ?? 8788);
@@ -88,8 +88,24 @@ const indexCount = db
 
 // Logged after the bind succeeds: printing the URL and then failing to listen reads as the
 // server having started.
+// How old the dataset is, because "I regenerated and nothing changed" is nearly always
+// this. Ages under a minute read as "just now" rather than "0 hours ago".
+function age(when) {
+  const mins = Math.round((Date.now() - when.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)} days ago`;
+}
+
 console.log(`rm-merchant-components  →  http://localhost:${server.port}`);
 console.log(`  dataset  ${dbPath}`);
+console.log(`           generated ${age(dbGeneratedAt)} · via ${dbSource}`);
+if (unusedLocalCopy) {
+  const what = unusedLocalCopy.stale ? "An out-of-date copy" : "A duplicate copy";
+  console.log(`! ${what} sits at ${unusedLocalCopy.path} and is NOT being read.`);
+  console.log(`  Delete it — the generated dataset is read in place, so no copying is needed.`);
+}
 console.log(
   `  branches ${branchCount}   explicit indexes ${indexCount}` +
     (indexCount === 0 ? "  (none yet — see docs/plan.md §7.2)" : ""),

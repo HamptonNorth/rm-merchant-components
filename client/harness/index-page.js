@@ -92,6 +92,18 @@ class HarnessIndex extends LitElement {
           ? html`
               <div class="mb-8 rounded-lg border border-slate-200 bg-white p-3 text-xs dark:border-slate-800 dark:bg-slate-900">
                 <p class="font-mono text-slate-500 dark:text-slate-400">${ds.dbPath}</p>
+                ${ds.generatedAt
+                  ? html`<p class="text-slate-500 dark:text-slate-400">
+                      generated ${new Date(ds.generatedAt).toLocaleString("en-GB")} · via ${ds.dbSource}
+                    </p>`
+                  : nothing}
+                ${ds.unusedLocalCopy
+                  ? html`<p class="mt-1 text-amber-700 dark:text-amber-300">
+                      ⚠ ${ds.unusedLocalCopy.stale ? "An out-of-date" : "A duplicate"} copy at
+                      <span class="font-mono">${ds.unusedLocalCopy.path}</span> is not being read —
+                      delete it, no copying is needed.
+                    </p>`
+                  : nothing}
                 <p class="mt-1 text-slate-600 dark:text-slate-300">
                   ${Object.entries(ds.counts)
                     .map(([t, n]) => `${t} ${n.toLocaleString("en-GB")}`)

@@ -12,12 +12,30 @@ bun install
 bun run dev          # build + serve on http://localhost:8788 with --hot
 ```
 
-The dataset is read **read-only, in place** from datagenerator2. Override the location if
-it lives elsewhere:
+## The dataset
+
+Read **read-only, in place** from datagenerator2 — regenerate there and this project picks
+it up on the next restart. There is never a reason to copy the file here; a copy is worse
+than no copy, because a stale one looks exactly like a fresh one.
+
+The location is resolved in this order, and the startup banner says which one won plus how
+old the file is:
+
+| | Where | Why |
+|---|---|---|
+| 1 | `MERCHANT_DB_PATH` | Explicit override. If set and absent, startup fails rather than quietly falling through. |
+| 2 | datagenerator2's `sqlite_path` | Read from its `datagenerator.env`, so changing where it writes moves this project too. |
+| 3 | `../datagenerator2/out/datagenerator.db` | The convention, if there is no config to read. |
+| 4 | `./data/datagenerator.db` | A local copy, if one was made anyway. |
+
+`MERCHANT_GENERATOR_DIR` points at datagenerator2 if it is not the sibling directory.
 
 ```bash
 MERCHANT_DB_PATH=/path/to/datagenerator.db bun run dev
 ```
+
+A copy in `./data` that is not the file being read is reported at startup and on the
+harness index, because it is either already out of date or one regeneration away from it.
 
 ## Scripts
 
