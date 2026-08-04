@@ -7,6 +7,7 @@ import { LitElement, html, nothing } from "lit";
 import { components, groups } from "../../src/components/registry.js";
 import { createApi } from "../../src/components/shared/api.js";
 import { applyStoredTheme, toggleTheme, currentTheme } from "./theme.js";
+import { flows } from "./flows.js";
 
 const STATUS = {
   ready: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
@@ -102,6 +103,27 @@ class HarnessIndex extends LitElement {
               </div>
             `
           : nothing}
+
+        <section class="mb-10">
+          <h2 class="mb-3 text-xs font-semibold tracking-wide text-slate-500 uppercase dark:text-slate-400">Flows</h2>
+          <p class="mb-3 text-sm text-slate-600 dark:text-slate-400">
+            Components in sequence, wired by their events — where the contracts between them get tested.
+          </p>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            ${flows.map(
+              (f) => html`<a
+                href="/f/${f.id}"
+                class="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-slate-400 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-600"
+              >
+                <h3 class="font-semibold">${f.title}</h3>
+                <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">${f.description}</p>
+                <p class="mt-3 font-mono text-xs text-slate-500 dark:text-slate-400">
+                  ${f.steps.map((s) => s.component).join("  →  ")}
+                </p>
+              </a>`,
+            )}
+          </div>
+        </section>
 
         ${groups.map(
           (g) => html`

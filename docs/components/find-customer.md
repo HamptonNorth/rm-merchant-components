@@ -105,6 +105,8 @@ workingBranch.addEventListener("merchant-working-branch-changed", (e) => {
 | `scope` | `scope` | `branch` \| `neighbours` \| `all` | `branch` | Search scope. The widen control steps through these. |
 | `heading` | `heading` | string | `"Find customer"` | Blank hides it. |
 | `placeholder` | `placeholder` | string | … | Input placeholder. |
+| `dense` | `dense` | boolean | `false` | Tighter rows — 49 px against 59 px, about a third more on screen. |
+| `zebra` | `zebra` | boolean | `false` | Alternating row shading. See below. |
 | `limit` | `limit` | number | `25` | Rows to return. The API caps at 500 and says when it did. |
 
 ## Events
@@ -126,6 +128,29 @@ to the counter cash account.
 
 Input is debounced at 180 ms, and out-of-order responses are discarded — a slower earlier
 request cannot overwrite a faster later one.
+
+## Density and zebra
+
+`dense` takes a row from 59 px to 49 px, which is roughly a third more results without
+scrolling. Both lines of a record stay — the account code, name and badges on the first, the
+town, postcode and owning branch on the second.
+
+`zebra` is **off by default**, and the reason is worth recording because the first attempt at
+it was actively harmful. This is a keyboard-driven list where Enter acts on the highlighted
+row, so that highlight has to be unambiguous. Shading alternate rows at
+`dark:bg-slate-800/40` put them within a shade of the active row's own background, and in
+dark mode the selected row became impossible to pick out — every other row looked equally
+selected.
+
+Two changes make zebra safe rather than removing it:
+
+- **The selected row carries an accent bar down its left edge**, not just a background tint.
+  That reads at a glance whatever is behind it, and it improves the non-zebra case too.
+- **The stripe is much fainter** (`bg-slate-500/5`), enough to bind the two lines of one
+  record together without competing for attention.
+
+Turn it on with `dense`, where rows are close enough that a record can run into its
+neighbour. At comfortable spacing the border and whitespace already do that job.
 
 ## Row badges
 

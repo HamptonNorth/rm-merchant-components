@@ -14,6 +14,7 @@ import { readdirSync, existsSync } from "node:fs";
 const entrypoints = [
   "client/harness/index-page.js",
   "client/harness/component-page.js",
+  "client/harness/flow-page.js",
   "src/components/registry.js",
 ];
 

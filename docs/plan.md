@@ -260,6 +260,19 @@ read a small set of CSS custom properties (`--merchant-accent`, `--merchant-radi
 one-line description, status chip, data dependencies. Blocked components are visibly
 marked with the reason.
 
+**Flow pages (`/f/<id>`)** — several components run as a sequence, wired by their events.
+The component page tests one component thoroughly and tests the joins between them not at
+all, which is where this project has come closest to shipping something wrong: `isHome` vs
+`isDefault` vs `isCustomerHome` was a collision only visible with two components in the same
+room. Each step declares what it consumes; a step whose input has not arrived says what it is
+waiting for rather than rendering broken. The detail that flowed between steps is shown, not
+hidden — it is the contract under test.
+
+Flow pages also carry the **cross-component checks that no single component can make**,
+because each holds half the facts: serving a customer owned by another branch (§0), an
+on-stop or over-limit verdict reached after the customer was chosen, a cash account with a
+delivery address. `client/harness/flows.js` holds both the wiring and those rules.
+
 **Component page (`/c/<id>`)** — the actual development surface:
 
 - **Stage** — the live component, on a resizable frame with 360 / 768 / 1280 / fluid presets

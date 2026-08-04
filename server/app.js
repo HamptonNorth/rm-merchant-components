@@ -9,6 +9,8 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { branches, appUsers } from "./routes/branches.js";
 import { customers } from "./routes/customers.js";
+import { credit } from "./routes/credit.js";
+import { delivery } from "./routes/delivery.js";
 import { userPermissions } from "./routes/permissions.js";
 import { harness } from "./routes/harness.js";
 import { dbPath, isDev } from "./db.js";
@@ -18,6 +20,8 @@ export const app = new Hono();
 const api = new Hono();
 api.route("/branches", branches);
 api.route("/customers", customers);
+api.route("/customers", credit);
+api.route("/customers", delivery);
 api.route("/app-users", appUsers);
 api.route("/app-users", userPermissions);
 api.route("/harness", harness);
@@ -48,6 +52,9 @@ async function page(c) {
   if (path.startsWith("/c/")) {
     return (await file("./client/component.html", "text/html; charset=utf-8")) ?? built(c);
   }
+  if (path.startsWith("/f/")) {
+    return (await file("./client/flow.html", "text/html; charset=utf-8")) ?? built(c);
+  }
   return c.text("Not found", 404);
 }
 
@@ -57,3 +64,4 @@ function built(c) {
 
 app.get("/", page);
 app.get("/c/:id", page);
+app.get("/f/:id", page);

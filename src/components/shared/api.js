@@ -64,6 +64,14 @@ export function createApi({ base = "" } = {}) {
       get("/api/customers", { q: term, branch: branchId, scope, limit }),
     listQuickCodes: ({ branchId } = {}) => get("/api/customers/quick-codes", { branch: branchId }),
 
+    // Credit: the summary answers the question, the invoice list shows the working.
+    getCreditSummary: ({ customerId, asOf } = {}) => get(`/api/customers/${customerId}/credit`, { asOf }),
+    listInvoices: ({ customerId, view, band, sort, limit, offset, asOf } = {}) =>
+      get(`/api/customers/${customerId}/invoices`, { view, band, sort, limit, offset, asOf }),
+
+    listDeliveryAddresses: ({ customerId, includeArchived } = {}) =>
+      get(`/api/customers/${customerId}/delivery-addresses`, { includeArchived: includeArchived ? 1 : "" }),
+
     listScenarios: ({ component } = {}) => get("/api/harness/scenarios", { component }),
     dataset: () => get("/api/harness/dataset"),
   };

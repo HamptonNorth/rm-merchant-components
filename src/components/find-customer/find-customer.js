@@ -48,6 +48,8 @@ export class MerchantFindCustomer extends MerchantElement {
     limit: { type: Number },
     heading: { type: String },
     placeholder: { type: String },
+    dense: { type: Boolean },
+    zebra: { type: Boolean },
     term: { state: true },
     results: { attribute: false, state: true },
     route: { state: true },
@@ -84,7 +86,20 @@ export class MerchantFindCustomer extends MerchantElement {
       default: "Name, postcode, account code, or 1–9",
       description: "Input placeholder.",
     },
-    { name: "limit", type: "number", default: 25, description: "Maximum rows returned." },
+    {
+      name: "dense",
+      type: "boolean",
+      default: false,
+      description: "Tighter rows — roughly a third more results on screen without scrolling.",
+    },
+    {
+      name: "zebra",
+      type: "boolean",
+      default: false,
+      description:
+        "Alternating row shading. Off by default because it competes with the keyboard highlight; worth turning on with dense, where the two lines of a record start to run together.",
+    },
+    { name: "limit", type: "number", default: 25, description: "Rows to return. The API caps at 500." },
   ];
 
   #debounce = null;
@@ -97,6 +112,8 @@ export class MerchantFindCustomer extends MerchantElement {
     this.limit = 25;
     this.heading = "Find customer";
     this.placeholder = "Name, postcode, account code, or 1–9";
+    this.dense = false;
+    this.zebra = false;
     this.term = "";
     this.results = [];
     this.route = "none";
@@ -233,28 +250,39 @@ export class MerchantFindCustomer extends MerchantElement {
     // owning branch holds the pricing and credit relationship (docs/plan.md §0).
     const elsewhere = this.workingBranchId != null && row.home_branch_id !== this.workingBranchId;
 
+    // Zebra sits on the <li> rather than the button, so the active and hover backgrounds
+    // paint over it rather than fighting it for the same element. Kept deliberately faint:
+    // at slate-800/40 it rendered almost identically to the active row in dark mode, and the
+    // selected row became impossible to pick out — which matters here, because Enter acts on
+    // it. The accent bar below is what actually carries the selection.
+    const stripe = this.zebra ? "odd:bg-slate-500/5" : "";
+
     return html`
-      <li>
+      <li class=${stripe}>
         <button
           part=${active ? "result result-active" : "result"}
           type="button"
           role="option"
           aria-selected=${active ? "true" : "false"}
-          class="w-full border-b border-slate-100 px-3 py-2 text-left last:border-b-0
+          class="w-full border-b border-l-2 border-slate-100 text-left last:border-b-0
                  focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent
-                 dark:border-slate-800
+                 dark:border-b-slate-800
+                 ${this.dense ? "px-3 py-1" : "px-3 py-2"}
                  ${active
-            ? "bg-accent-soft dark:bg-slate-800"
-            : "hover:bg-slate-50 dark:hover:bg-slate-800/60"}"
+            ? "border-l-accent bg-accent-soft dark:bg-slate-700/60"
+            : "border-l-transparent hover:bg-slate-50 dark:hover:bg-slate-800/60"}"
           @click=${() => this.select(row)}
           @mousemove=${() => (this.activeIndex = index)}
         >
-          <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1 ${this.dense ? "leading-snug" : ""}">
             <span class="font-mono text-xs text-slate-500 dark:text-slate-400">${row.account_code}</span>
             <span class="font-medium text-slate-900 dark:text-slate-100">${row.name}</span>
             <span class="ml-auto flex shrink-0 items-center gap-1">${this.renderBadges(row)}</span>
           </span>
-          <span class="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-xs text-slate-500 dark:text-slate-400">
+          <span
+            class="flex flex-wrap items-baseline gap-x-2 text-xs text-slate-500 dark:text-slate-400
+                   ${this.dense ? "leading-snug" : "mt-0.5"}"
+          >
             <span>${row.town}</span>
             <span class="font-mono">${row.postcode}</span>
             ${elsewhere

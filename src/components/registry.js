@@ -75,12 +75,13 @@ export const components = [
     tag: "merchant-credit-status",
     title: "Check credit status",
     version: "0.1.0",
-    status: "planned",
+    status: "ready",
     phase: 1,
     group: "Customer",
     description:
-      "Limit, outstanding, headroom and ageing buckets, plus a paged drill-down list of unpaid and recent invoices.",
+      "States a verdict — OK, near limit, over limit, on stop — with limit, outstanding, headroom and clickable ageing buckets, over a paged drill-down of unpaid and recent invoices.",
     dataDeps: ["customer", "aged_debt", "branch"],
+    module: "/src/components/credit-status/credit-status.js",
     events: ["merchant-credit-checked", "merchant-invoice-selected"],
   },
   {
@@ -88,12 +89,13 @@ export const components = [
     tag: "merchant-delivery-address",
     title: "Select delivery address",
     version: "0.1.0",
-    status: "planned",
+    status: "ready",
     phase: 1,
     group: "Customer",
     description:
-      "Delivery addresses for a customer with project reference, unload method, instructions and what3words.",
+      "Delivery addresses for a customer, led by project reference and unload method — what a driver needs before setting off — with instructions and what3words. Most customers have none, so the empty state is the common one.",
     dataDeps: ["customer_delivery_address"],
+    module: "/src/components/delivery-address/delivery-address.js",
     events: ["merchant-delivery-address-selected"],
   },
   {

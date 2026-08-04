@@ -162,6 +162,105 @@ const SCENARIOS = [
     props: (row) => ({ userId: row.id, allowedCodes: null, selectedId: null }),
   },
 
+  // delivery-address
+  {
+    id: "delivery-most",
+    component: "delivery-address",
+    label: "Customer with the most addresses",
+    resolve: () => db.query(`select customer_id as id from customer_delivery_address
+                              group by 1 order by count(*) desc limit 1`).get(),
+    props: (row) => ({ customerId: row.id, selectedId: null }),
+  },
+  {
+    id: "delivery-single",
+    component: "delivery-address",
+    label: "Single address",
+    resolve: () => db.query(`select customer_id as id from customer_delivery_address
+                              group by 1 having count(*) = 1 order by customer_id limit 1`).get(),
+    props: (row) => ({ customerId: row.id, selectedId: null }),
+  },
+  {
+    id: "delivery-instructions",
+    component: "delivery-address",
+    label: "Site with unloading instructions",
+    // The case the card is built around: a driver needs the hiab and the muddy-site warning
+    // before setting off, not on arrival.
+    resolve: () => db.query(`select customer_id as id from customer_delivery_address
+                              where delivery_instructions <> '' and unload_method = 'hiab'
+                              order by customer_id limit 1`).get(),
+    props: (row) => ({ customerId: row.id, selectedId: null }),
+  },
+  {
+    id: "delivery-none",
+    component: "delivery-address",
+    label: "No delivery address — a collect customer",
+    resolve: () => db.query(`select c.id from customer c
+        where not exists (select 1 from customer_delivery_address d where d.customer_id = c.id)
+        order by c.id limit 1`).get(),
+    props: (row) => ({ customerId: row.id, selectedId: null }),
+  },
+
+  // credit-status — the verdicts that change what a counter hand does.
+  {
+    id: "credit-ok",
+    component: "credit-status",
+    label: "Healthy credit account",
+    resolve: () => db.query(`select c.id from customer c
+        where c.account_type='credit' and c.credit_status='normal'
+          and (select coalesce(sum(unpaid_pence),0) from aged_debt a where a.customer_id=c.id)
+              between 1 and c.credit_limit_pence * 0.5
+        order by c.id limit 1`).get(),
+    props: (row) => ({ customerId: row.id, view: "unpaid" }),
+  },
+  {
+    id: "credit-over-limit",
+    component: "credit-status",
+    label: "Over the credit limit",
+    resolve: () => db.query(`select c.id from customer c
+        where c.account_type='credit'
+          and (select coalesce(sum(unpaid_pence),0) from aged_debt a where a.customer_id=c.id)
+              > c.credit_limit_pence
+        order by c.id limit 1`).get(),
+    props: (row) => ({ customerId: row.id, view: "unpaid" }),
+  },
+  {
+    id: "credit-on-stop",
+    component: "credit-status",
+    label: "On stop — do not release goods",
+    resolve: () => db.query(`select id from customer where credit_status='on_stop' order by id limit 1`).get(),
+    props: (row) => ({ customerId: row.id, view: "unpaid" }),
+  },
+  {
+    id: "credit-cash",
+    component: "credit-status",
+    label: "Cash account with history",
+    // No credit facility, so limit and headroom are meaningless and must not be shown.
+    resolve: () => db.query(`select c.id from customer c
+        where c.account_type='cash'
+          and exists (select 1 from aged_debt a where a.customer_id = c.id)
+        order by c.id limit 1`).get(),
+    props: (row) => ({ customerId: row.id, view: "recent" }),
+  },
+  {
+    id: "credit-heaviest",
+    component: "credit-status",
+    label: "Most unpaid invoices in the dataset",
+    resolve: () => db.query(`select customer_id as id from aged_debt where unpaid_pence > 0
+                              group by 1 order by count(*) desc limit 1`).get(),
+    props: (row) => ({ customerId: row.id, view: "unpaid", dense: true }),
+  },
+  {
+    id: "credit-nothing-owed",
+    component: "credit-status",
+    label: "Nothing outstanding",
+    resolve: () => db.query(`select c.id from customer c
+        where c.account_type='credit'
+          and not exists (select 1 from aged_debt a where a.customer_id=c.id and a.unpaid_pence>0)
+          and exists (select 1 from aged_debt a where a.customer_id=c.id)
+        order by c.id limit 1`).get(),
+    props: (row) => ({ customerId: row.id, view: "recent" }),
+  },
+
   // find-customer — the four routes, plus the case widening exists for.
   {
     id: "find-busiest-branch",
