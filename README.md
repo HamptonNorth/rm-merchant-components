@@ -30,6 +30,12 @@ MERCHANT_DB_PATH=/path/to/datagenerator.db bun run dev
 | `bun run check` | Bundle every client entry point to catch bad imports and syntax errors |
 | `bun run explain` | Time a query and test candidate indexes on a scratch DB copy |
 
+If the port is busy the server names the process holding it and prints the command to free
+it. `PORT=8789 bun run dev` moves it instead. One warning it repeats, because it has cost
+real time here: **do not use `pkill -f server/index.js`** — `pkill -f` matches against full
+command lines, and the shell running it has the pattern in its own, so it kills your own
+terminal. Target the port (`fuser -k 8788/tcp`), not the command name.
+
 Build output (`src/styles/tailwind.css*`, `client/vendor/`) is generated and gitignored.
 
 ## Layout
