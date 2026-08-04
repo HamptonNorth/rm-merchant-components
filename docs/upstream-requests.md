@@ -154,6 +154,63 @@ and DDL. Justified by scale rather than by today: 2.9 ms at 39k rows, 25.3 ms at
 
 ---
 
+## 2b. Address columns, punctuation and diacritic normalisation in `customer_fts`
+
+**Status:** working without it; wanted before the customer count grows.
+
+find-customer searches addresses as a separate route (`Stead Lane` → the customers on it),
+but `address_1`/`address_2` are not in the FTS index, so it falls back to a `LIKE` scan.
+
+| | 39,452 customers | ~400k projected |
+|---|---:|---:|
+| address `LIKE`, worst case | 3.4 ms | ~34 ms |
+| name via trigram FTS | 0.06 ms | 0.06 ms |
+
+Affordable now, and mitigated by only running the address route when the cheaper routes have
+not filled the page. The change is to add the two columns to the existing `CUSTOMER_FTS`
+definition and its populate statement:
+
+```sql
+CREATE VIRTUAL TABLE customer_fts USING fts5(
+  name, town, address_1, address_2,
+  content='customer', content_rowid='id', tokenize='trigram');
+```
+
+### Normalised text alongside the verbatim columns
+
+The index stores names verbatim, which makes two whole classes of search silently miss.
+Neither can be fixed consumer-side: normalisation has to happen where the index is built.
+
+**Punctuation.** 13,112 of 39,452 customer names contain a full stop, so `N.R.` and `NR` are
+different strings and someone typing `NR Willis` does not find "N.R. Willis". Stripping
+`. ' - , & !` and collapsing whitespace fixes it, and the same pass covers the apostrophes
+and hyphens that a real ledger has and this generated one does not (0 apostrophes and 1
+hyphen in the current data — absence in the fixture, not in the world).
+
+**Diacritics.** Only 28 rows are non-ASCII today, so this earns nothing measurable against
+the current dataset. It is worth doing anyway *because it rides on the same pass*: a real
+merchant's ledger holds Polish, Portuguese and Irish trade names, and `Müller` / `Muller` /
+`Mueller` should be one customer. Folding to ASCII costs nothing extra once text is being
+rewritten.
+
+Suggested shape — normalised columns beside the verbatim ones, so exact display is
+unaffected and search has something canonical to match against:
+
+```sql
+CREATE VIRTUAL TABLE customer_fts USING fts5(
+  name, town, address_1, address_2,        -- verbatim, for display and exact matching
+  name_norm, address_norm,                 -- punctuation-stripped, diacritic-folded, lower
+  content='customer', content_rowid='id', tokenize='trigram');
+```
+
+The consumer then searches `name_norm:` with an equally normalised query term, and the
+verbatim columns stay available for ranking an exact spelling above a normalised one.
+
+Doing both in one pass matters: each is a regeneration cycle on its own, and the diacritic
+half is free once the punctuation half is being done.
+
+---
+
 ## 3. Stock — [plan §7.1](plan.md)
 
 **Status:** blocking two components (`stock-check`, `multi-branch-stock`), which are built

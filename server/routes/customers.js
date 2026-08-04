@@ -55,6 +55,7 @@ customers.get("/", (c) => {
       // like the whole answer.
       matchCount: result.matchCount ?? result.total,
       matchCountApproximate: Boolean(result.matchCountApproximate),
+      suggested: Boolean(result.suggested),
       limit,
       limitRequested: requested,
       limitCapped: requested > MAX_LIMIT,

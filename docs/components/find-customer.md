@@ -14,7 +14,7 @@ so it routes on what was typed rather than making anyone pick a search mode firs
 | a single digit `1`–`9` | that branch's quick code — one cash account | `1` → *Cash Sale — Stockport* |
 | the dataset's account-code shape | account code prefix | `CA/000` |
 | 3+ chars starting letter(s) then a digit | postcode, **and** name | `SK4`, `SK4 1`, `SK41DR` |
-| 4+ chars otherwise | name — every token must match | `arrowsmith`, `gate build` |
+| 4+ chars otherwise | name, then address | `arrowsmith`, `gate build`, `Stead Lane` |
 
 **Routing happens server-side.** The account-code shape is a property of the dataset, not of
 the UI: datagenerator2 emits `9999999`, `XX/999999`, `XX/9999999` or `XXX/999999` from
@@ -35,6 +35,36 @@ Every whitespace-separated token has to appear somewhere in the name, independen
 
 So there is no need to type whole words, or to get them in the right order. Trigram FTS
 matches substrings, and the tokens are ANDed.
+
+### Abbreviations, suffixes and spelling variants
+
+Three problems that look alike and need different treatment. Measured on the dataset:
+
+**Legal forms — `Ltd` / `Limited` / `Co` / `plc` — are never required.** 18,896 customers are
+spelled "Limited" against 16,387 "Ltd"/"Ltd.", with 10,576 carrying no legal form at all.
+Because tokens are ANDed, typing `ltd` used to **exclude** every "Limited" record: a search
+went from 34 results to 11 by adding a word. A synonym pair would not have been enough
+either, since a third of customers have no suffix to be equivalent to. So these words stop
+being required and only influence ranking — `smith ltd` puts an actual "Smith Ltd" above a
+"Smith Limited", and finds both.
+
+Searching *only* a legal form still requires it, or the query would match everything.
+
+**Mc / Mac find each other**, generated from the token rather than listed, so McPherson,
+McBride and MacLeod all work without an entry each.
+
+**Street types match both ways** — `Lane`/`Ln`, `Road`/`Rd`, `Avenue`/`Ave`. Substring
+matching gets one direction free (`ave` sits inside "Avenue") but not the other (`rd` is
+nowhere inside "Road"), so both are expanded.
+
+These live as a **rule list in code, not a database table**: it is roughly twenty entries,
+it is search behaviour rather than merchant data, and a table would have to live upstream in
+datagenerator2 and need a regeneration to edit. If it grows past a few dozen, or a merchant
+wants to edit it without a deploy, that judgement changes.
+
+**Known limitation:** only leading and trailing punctuation is stripped from a token, so
+`N.R.` keeps its inner dot. Typing `NR Willis` does not find "N.R. Willis" — fixing that
+means normalising punctuation in the FTS index, which is built upstream.
 
 Two details behind that:
 
@@ -59,6 +89,54 @@ Three further points where the behaviour is deliberately not the obvious thing:
   would return half the branch.
 - **A postcode typed without its space still matches.** `SK41DR` is tried both as-is and as
   `SK4 1DR`, two indexed seeks.
+
+### Did-you-mean, for when the spelling is wrong
+
+Trigram substring matching is unforgiving: one transposed letter takes `builders` from 1,450
+matches to **nought**. Every one of `buidlers`, `bulders`, `buillders`, `builers` returned
+nothing before this.
+
+So when a search finds nothing at all, the closest names are offered instead, ranked by
+trigram similarity and labelled `matched_on: "similar"` with a `similarity` score. The UI
+says **"no exact match — closest names"** rather than presenting guesses as matches.
+
+**It only runs on a zero-result search**, and that is what makes it safe. The usual objection
+to fuzzy matching — that it trades precision for recall — does not apply when there is
+nothing on screen to dilute. It cannot make a good result worse because it never runs
+alongside one. A test pins that.
+
+| typed | found |
+|---|---|
+| `buidlers` | Hindley Builders Co. Ltd. |
+| `biulders` | SLP Builders Co. Ltd. |
+| `arowsmith` | K.W. Arrowsmith Co. Ltd. |
+| `smiht` | Paul Smith |
+| `zzzznothing` | nothing — a term resembling nothing still returns nothing |
+
+Two things were tried and rejected:
+
+- **Shortening the term to a prefix** is cheaper and not good enough. It recovers a dropped
+  letter, but an early transposition (`biulders` → `biu`) finds one confidently *wrong*
+  customer, which is worse than finding none.
+- **Overlap over the longer set** (`shared / max`) ranked "Sharon Smith" above "K.W.
+  Arrowsmith Co. Ltd." for `arowsmith`, penalising a long name for being long. **Dice**
+  (`2·shared / (a+b)`) got all four test typos right where that got two wrong.
+
+Cost is ~15 ms branch-scoped and ~115 ms across all 39,452 — acceptable because it only
+fires when the fast paths have already failed.
+
+### Address is its own route
+
+`Stead Lane` finds the customers on it, labelled `matched_on: "address"` so a match on the
+street somebody is standing on is never confused with a match on the company name.
+
+It runs **only when the cheaper routes have not filled the page**. Address is a `LIKE` scan
+over `address_1`/`address_2` — 3.4 ms worst case against 0.06 ms for the FTS name search —
+so for a common term like `builders` it would cost that to add nothing. A test pins that it
+stays out of the way.
+
+At this size the scan is affordable; at ~400k customers it becomes ~34 ms, and the columns
+want adding to `customer_fts` upstream. Recorded in `docs/upstream-requests.md`.
 
 ## Scope and widening
 

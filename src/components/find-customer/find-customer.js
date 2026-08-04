@@ -59,6 +59,7 @@ export class MerchantFindCustomer extends MerchantElement {
     searching: { state: true },
     matchCount: { state: true },
     truncated: { state: true },
+    suggested: { state: true },
   };
 
   static harnessSchema = [
@@ -132,6 +133,7 @@ export class MerchantFindCustomer extends MerchantElement {
     this.searching = false;
     this.matchCount = 0;
     this.truncated = false;
+    this.suggested = false;
   }
 
   updated(changed) {
@@ -160,6 +162,7 @@ export class MerchantFindCustomer extends MerchantElement {
       this.activeIndex = -1;
       this.matchCount = 0;
       this.truncated = false;
+      this.suggested = false;
       return;
     }
 
@@ -182,6 +185,7 @@ export class MerchantFindCustomer extends MerchantElement {
     this.route = result?.route ?? "none";
     this.matchCount = result?.matchCount ?? this.results.length;
     this.truncated = Boolean(result?.truncated);
+    this.suggested = Boolean(result?.suggested);
     // A quick code resolves to exactly one account, so pre-arm it for Enter.
     this.activeIndex = this.route === "quick_code" && this.results.length ? 0 : -1;
   }
@@ -351,6 +355,14 @@ export class MerchantFindCustomer extends MerchantElement {
   renderCount() {
     if (this.selectedRow) return nothing;
     if (this.route === "none" || this.route === "too_short" || !this.results.length) return nothing;
+    // Never present a near miss as a match. Someone who typed a name that does not exist
+    // needs to know these are guesses before they pick one.
+    if (this.suggested) {
+      return html`·
+        <span class="font-medium text-amber-700 dark:text-amber-300"
+          >no exact match — closest names</span
+        >`;
+    }
     const shown = this.results.length;
     const total = Math.max(this.matchCount, shown);
     const fmt = (n) => n.toLocaleString("en-GB");

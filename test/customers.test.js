@@ -8,6 +8,9 @@ import {
   accountCodeShape,
   widenBranchIds,
   searchCustomers,
+  nameQuery,
+  equivalents,
+  fuzzySearch,
 } from "../server/queries/customers.js";
 import { db } from "../server/db.js";
 
@@ -39,7 +42,7 @@ test("account codes route by the shape actually in the data, not a fixed pattern
   // Format 1 has no letters and no slash at all, so a numeric term IS the account code —
   // the opposite of what happens under the slashed formats.
   expect(routeFor("0027200", NUMERIC).route).toBe("account_code");
-  expect(routeFor("0027200", SLASHED).route).toBe("name");
+  expect(routeFor("0027200", SLASHED).route).toBe("name_then_address");
 });
 
 test("postcodes search from three characters, names from four", () => {
@@ -50,7 +53,7 @@ test("postcodes search from three characters, names from four", () => {
   expect(routeFor("SK4 1DR", SLASHED).route).toBe("postcode_then_name");
 
   expect(routeFor("smi", SLASHED).route).toBe("too_short");
-  expect(routeFor("smith", SLASHED).route).toBe("name");
+  expect(routeFor("smith", SLASHED).route).toBe("name_then_address");
 });
 
 test("a postcode-looking term still searches names — 'A1 Plumbing' is a trading name", async () => {
@@ -208,5 +211,157 @@ test("tokens shorter than three characters still constrain the search", () => {
     const n = row.name.toLowerCase();
     expect(n.includes("smith"), row.name).toBe(true);
     expect(n.includes("j"), row.name).toBe(true);
+  }
+});
+
+// --- abbreviations, suffixes and spelling variants ---------------------------
+
+test("a legal-form suffix never excludes — adding a word must not lose matches", () => {
+  // The failure this fixes: tokens are ANDed, so typing "ltd" used to drop every record
+  // spelled "Limited". Measured, a search fell from 34 results to 11 by adding a word.
+  const target = db.query(`select name, home_branch_id from customer
+                            where name like '%Limited' limit 1`).get();
+  const stem = target.name.split(" ")[0];
+
+  const bare = searchCustomers({ term: stem, workingBranchId: target.home_branch_id, scope: "all", limit: 100 });
+  for (const suffix of ["ltd", "ltd.", "limited", "plc", "co"]) {
+    const withSuffix = searchCustomers({
+      term: `${stem} ${suffix}`,
+      workingBranchId: target.home_branch_id,
+      scope: "all",
+      limit: 100,
+    });
+    expect(withSuffix.matchCount, `"${stem} ${suffix}" must not lose matches`).toBe(bare.matchCount);
+  }
+});
+
+test("searching only a legal form still requires it", () => {
+  // Otherwise nothing at all would be required and the query would match everything.
+  const q = nameQuery("ltd");
+  expect(q.long.map((t) => t.norm)).toEqual(["ltd"]);
+  expect(q.optional).toHaveLength(0);
+});
+
+test("nameQuery separates distinctive tokens from legal forms", () => {
+  const q = nameQuery("N.R. Willis Limited");
+  expect(q.long.map((t) => t.norm)).toEqual(["n.r", "willis"]);
+  expect(q.optional.map((t) => t.norm)).toEqual(["limited"]);
+
+  // Only leading and trailing punctuation is stripped, so "N.R." keeps its inner dot and
+  // matches records spelled that way. Typing "NR Willis" therefore does NOT find "N.R.
+  // Willis" — fixing that means normalising punctuation in the index too, which is built
+  // upstream. Recorded rather than half-fixed here.
+  expect(nameQuery("nr willis").long.map((t) => t.norm)).toEqual(["willis"]);
+});
+
+test("Mc and Mac find each other, generated rather than listed", () => {
+  expect(equivalents("mcpherson").sort()).toEqual(["macpherson", "mcpherson"]);
+  expect(equivalents("macleod").sort()).toEqual(["macleod", "mcleod"]);
+
+  const branch = db.query(`select id from branch where branch_type='trading' limit 1`).get().id;
+  const mc = searchCustomers({ term: "mcpherson", workingBranchId: branch, scope: "all", limit: 100 });
+  const mac = searchCustomers({ term: "macpherson", workingBranchId: branch, scope: "all", limit: 100 });
+  expect(mc.matchCount).toBe(mac.matchCount);
+  expect(mc.matchCount).toBeGreaterThan(0);
+});
+
+test("street types match in both directions", () => {
+  // Substring matching gets one direction free — "ave" is inside "Avenue" — but "rd" is
+  // nowhere inside "Road", so both have to be expanded.
+  expect(equivalents("lane")).toContain("ln");
+  expect(equivalents("ln")).toContain("lane");
+  expect(equivalents("road")).toContain("rd");
+  expect(equivalents("rd")).toContain("road");
+
+  const row = db.query(`select address_1, home_branch_id from customer
+                         where address_1 like '% Lane' limit 1`).get();
+  const words = row.address_1.split(" ");
+  const street = words.slice(-2).join(" ");
+  const abbreviated = `${words[words.length - 2]} Ln`;
+
+  const full = searchCustomers({ term: street, workingBranchId: row.home_branch_id, scope: "all", limit: 50 });
+  const short = searchCustomers({ term: abbreviated, workingBranchId: row.home_branch_id, scope: "all", limit: 50 });
+
+  expect(full.matchCount).toBeGreaterThan(0);
+  expect(short.matchCount, `"${abbreviated}" should find what "${street}" finds`).toBe(full.matchCount);
+  expect(full.rows[0].matched_on).toBe("address");
+});
+
+test("a multi-token search containing an expanded token still parses", () => {
+  // FTS5 accepts implicit AND between bare terms but not before a parenthesised OR group:
+  // `name:"a" name:("b" OR "c")` is a syntax error. Single-word Mc/Mac worked and hid this.
+  const branch = db.query(`select id from branch where branch_type='trading' limit 1`).get().id;
+  for (const term of ["stead lane", "john mcbride", "green road builders"]) {
+    expect(() =>
+      searchCustomers({ term, workingBranchId: branch, scope: "all", limit: 10 }),
+    ).not.toThrow();
+  }
+});
+
+test("address only runs when the cheaper routes have not filled the page", () => {
+  // It is a full scan at ~3.4ms. For a common term it would cost that to add nothing.
+  const branch = db.query(`select id from branch where branch_type='trading' limit 1`).get().id;
+  const common = searchCustomers({ term: "builders", workingBranchId: branch, scope: "all", limit: 25 });
+
+  expect(common.rows).toHaveLength(25);
+  expect(common.rows.every((r) => r.matched_on !== "address")).toBe(true);
+  expect(common.plan.join(" ")).not.toContain("address_1");
+});
+
+// --- did-you-mean --------------------------------------------------------------
+
+test("a typo recovers the right customer", () => {
+  // Trigram substring matching is unforgiving: one transposed letter takes "builders" from
+  // 1,450 matches to nought. Counter staff type fast and spell approximately.
+  const branch = db.query(`select home_branch_id id, count(*) n from customer
+                            group by 1 order by n desc limit 1`).get().id;
+
+  for (const [typo, want] of [
+    ["buidlers", "builders"],
+    ["bulders", "builders"],
+    ["biulders", "builders"],
+    ["arowsmith", "arrowsmith"],
+  ]) {
+    const exact = searchCustomers({ term: typo, workingBranchId: branch, scope: "branch", limit: 25 });
+    expect(exact.suggested, `"${typo}" should fall back`).toBe(true);
+    expect(
+      exact.rows[0].name.toLowerCase().includes(want),
+      `"${typo}" -> ${exact.rows[0]?.name}`,
+    ).toBe(true);
+    expect(exact.rows[0].matched_on).toBe("similar");
+  }
+});
+
+test("the fallback never runs alongside real results", () => {
+  // What makes it safe: it cannot dilute a good result set because it only fires when there
+  // is nothing on screen.
+  const branch = db.query(`select home_branch_id id, count(*) n from customer
+                            group by 1 order by n desc limit 1`).get().id;
+  const good = searchCustomers({ term: "builders", workingBranchId: branch, scope: "branch", limit: 25 });
+
+  expect(good.suggested).toBe(false);
+  expect(good.rows.every((r) => r.matched_on !== "similar")).toBe(true);
+  expect(good.rows.every((r) => r.similarity === undefined)).toBe(true);
+});
+
+test("a term that resembles nothing returns nothing, not noise", () => {
+  const branch = db.query(`select id from branch where branch_type='trading' limit 1`).get().id;
+  const none = searchCustomers({ term: "zzzznothinglikethis", workingBranchId: branch, scope: "branch" });
+  expect(none.rows).toHaveLength(0);
+  expect(none.suggested).toBe(false);
+});
+
+test("Dice scoring beats overlap-over-max, which favours short names", () => {
+  // The first attempt used shared/max(a,b) and ranked "Sharon Smith" above "K.W. Arrowsmith
+  // Co. Ltd." for "arowsmith" — a long name was penalised for being long.
+  const branch = db.query(`select home_branch_id id, count(*) n from customer
+                            group by 1 order by n desc limit 1`).get().id;
+  const { rows } = fuzzySearch("arowsmith", [branch], 8);
+
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows[0].name.toLowerCase()).toContain("arrowsmith");
+  // Ranked, best first.
+  for (let i = 1; i < rows.length; i++) {
+    expect(rows[i - 1].similarity).toBeGreaterThanOrEqual(rows[i].similarity);
   }
 });
