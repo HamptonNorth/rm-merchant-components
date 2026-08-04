@@ -96,9 +96,12 @@ Trigram substring matching is unforgiving: one transposed letter takes `builders
 matches to **nought**. Every one of `buidlers`, `bulders`, `buillders`, `builers` returned
 nothing before this.
 
-So when a search finds nothing at all, the closest names are offered instead, ranked by
-trigram similarity and labelled `matched_on: "similar"` with a `similarity` score. The UI
-says **"no exact match — closest names"** rather than presenting guesses as matches.
+So when a search finds nothing at all, the closest names are offered instead, labelled
+`matched_on: "similar"` with an `edits` count. The UI says **"no exact match — closest
+names"** rather than presenting guesses as matches.
+
+Matching is **edit distance against individual words**, not similarity against the whole
+name, and transpositions count as one edit rather than two.
 
 **It only runs on a zero-result search**, and that is what makes it safe. The usual objection
 to fuzzy matching — that it trades precision for recall — does not apply when there is
@@ -107,23 +110,35 @@ alongside one. A test pins that.
 
 | typed | found |
 |---|---|
-| `buidlers` | Hindley Builders Co. Ltd. |
-| `biulders` | SLP Builders Co. Ltd. |
-| `arowsmith` | K.W. Arrowsmith Co. Ltd. |
-| `smiht` | Paul Smith |
+| `buidlers` | G.R. Stewart House Builders Limited (1 edit) |
+| `biulders` | G.R. Stewart House Builders Limited (1 edit) |
+| `arowsmith` | K.W. Arrowsmith Co. Ltd. (1 edit) |
+| `paintr` | Joseph Nott Painters and Decorators Limited (2 edits) |
+| `smiht` | Smith Heating Co. Ltd. (1 edit) |
 | `zzzznothing` | nothing — a term resembling nothing still returns nothing |
 
-Two things were tried and rejected:
+### Three attempts, and why the first two failed the same way
 
-- **Shortening the term to a prefix** is cheaper and not good enough. It recovers a dropped
-  letter, but an early transposition (`biulders` → `biu`) finds one confidently *wrong*
-  customer, which is worse than finding none.
-- **Overlap over the longer set** (`shared / max`) ranked "Sharon Smith" above "K.W.
-  Arrowsmith Co. Ltd." for `arowsmith`, penalising a long name for being long. **Dice**
-  (`2·shared / (a+b)`) got all four test typos right where that got two wrong.
+Both early versions compared the query against the **whole name**, and both were beaten by
+name length:
 
-Cost is ~15 ms branch-scoped and ~115 ms across all 39,452 — acceptable because it only
-fires when the fast paths have already failed.
+| attempt | failure |
+|---|---|
+| overlap ÷ longer set | ranked "Sharon Smith" above "K.W. Arrowsmith Co. Ltd." for `arowsmith` — a long name penalised for being long |
+| Dice over trigrams | scored "FSS Painters and Decorators Limited" **0.195** for `paintr` and rejected it, offering **"Zain Patel"** instead, which shares `" pa"` and `"ain"` by coincidence. There were 29 Painters in that branch and it found none of them |
+| **per-word edit distance** | `paintr`→`painters` is 2, `paintr`→`patel` is 4. No length bias, and 3–5× faster because most comparisons exit on the length check |
+
+A prefix fallback was also tried: it recovers a dropped letter, but an early transposition
+(`biulders` → `biu`) finds one confidently *wrong* customer, which is worse than none.
+
+**Transpositions count as one edit.** Swapping adjacent keys is the commonest typing error,
+and under plain Levenshtein `smiht` scores 2 against both "smith" and "swift" — the tie
+breaks arbitrarily and the counter is shown *H.T. Swift Mechanical Services*.
+
+Bounds are tightened for short words: at four characters a distance of two is a different
+word, not a typo. "cot" and "cat" are both real.
+
+Cost is ~20 ms across four branches and zero on searches that work.
 
 ### Address is its own route
 

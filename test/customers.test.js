@@ -341,7 +341,7 @@ test("the fallback never runs alongside real results", () => {
 
   expect(good.suggested).toBe(false);
   expect(good.rows.every((r) => r.matched_on !== "similar")).toBe(true);
-  expect(good.rows.every((r) => r.similarity === undefined)).toBe(true);
+  expect(good.rows.every((r) => r.edits === undefined)).toBe(true);
 });
 
 test("a term that resembles nothing returns nothing, not noise", () => {
@@ -351,17 +351,44 @@ test("a term that resembles nothing returns nothing, not noise", () => {
   expect(none.suggested).toBe(false);
 });
 
-test("Dice scoring beats overlap-over-max, which favours short names", () => {
-  // The first attempt used shared/max(a,b) and ranked "Sharon Smith" above "K.W. Arrowsmith
-  // Co. Ltd." for "arowsmith" — a long name was penalised for being long.
+test("distance is measured per word, not against the whole name", () => {
+  // Two earlier attempts compared the query to the entire name and both let length dominate.
+  // Dice rejected "FSS Painters and Decorators Limited" for "paintr" at 0.195 — the query
+  // matched one word almost exactly, but a long name has many trigrams — and offered "Zain
+  // Patel", which shares " pa" and "ain" by coincidence.
   const branch = db.query(`select home_branch_id id, count(*) n from customer
                             group by 1 order by n desc limit 1`).get().id;
-  const { rows } = fuzzySearch("arowsmith", [branch], 8);
 
+  const { rows } = fuzzySearch("paintr", [branch], 8);
   expect(rows.length).toBeGreaterThan(0);
-  expect(rows[0].name.toLowerCase()).toContain("arrowsmith");
-  // Ranked, best first.
+  expect(rows[0].name.toLowerCase()).toContain("painter");
+  // A long company name must not be penalised for its length.
+  expect(rows.some((r) => r.name.length > 30)).toBe(true);
+
   for (let i = 1; i < rows.length; i++) {
-    expect(rows[i - 1].similarity).toBeGreaterThanOrEqual(rows[i].similarity);
+    expect(rows[i - 1].edits).toBeLessThanOrEqual(rows[i].edits);
   }
+});
+
+test("a transposition costs one edit, not two", () => {
+  // Swapping adjacent keys is the commonest typing error. Under plain Levenshtein "smiht"
+  // scores 2 against both "smith" and "swift", the tie breaks arbitrarily, and the counter
+  // is shown H.T. Swift Mechanical Services.
+  const branch = db.query(`select home_branch_id id, count(*) n from customer
+                            group by 1 order by n desc limit 1`).get().id;
+
+  for (const [typo, want] of [["smiht", "smith"], ["buidlers", "builders"], ["biulders", "builders"]]) {
+    const { rows } = fuzzySearch(typo, [branch], 5);
+    expect(rows.length, typo).toBeGreaterThan(0);
+    expect(rows[0].name.toLowerCase(), `${typo} -> ${rows[0].name}`).toContain(want);
+    expect(rows[0].edits, `${typo} should be one edit away`).toBe(1);
+  }
+});
+
+test("an unrelated word of similar length is not offered", () => {
+  const branch = db.query(`select home_branch_id id, count(*) n from customer
+                            group by 1 order by n desc limit 1`).get().id;
+  // "paintr" vs "patel" is 4 edits and "paintr" vs "zain" is 3 — neither should appear.
+  const { rows } = fuzzySearch("paintr", [branch], 8);
+  expect(rows.every((r) => !r.name.toLowerCase().includes("patel"))).toBe(true);
 });

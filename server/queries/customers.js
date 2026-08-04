@@ -351,67 +351,123 @@ function addressSearch(term, branchIds, limit) {
 // --- did-you-mean fallback ---------------------------------------------------
 //
 // Counter staff type fast and spell approximately, and trigram substring matching is
-// unforgiving: one transposed letter takes "builders" from 1,450 matches to nought. Measured
-// against real typos, every one of buidlers / bulders / buillders / builers returns zero.
+// unforgiving: one transposed letter takes "builders" from 1,450 matches to nought.
 //
 // This runs ONLY when the ordinary search found nothing, which is what makes it safe. The
 // usual objection to fuzzy matching — that it trades precision for recall — does not apply
-// when there is nothing on screen to dilute. It cannot make a good result worse because it
-// never runs alongside one.
+// when there is nothing on screen to dilute.
 //
-// Shortening the term to a prefix was the cheaper option and is not good enough: it recovers
-// a dropped letter but an early transposition ("biulders" -> "biu") finds one confidently
-// wrong customer, which is worse than finding none.
+// Matching is EDIT DISTANCE AGAINST INDIVIDUAL WORDS, not similarity against the whole name.
+// Two earlier attempts compared the query to the entire name and both failed the same way,
+// by letting name length dominate:
+//
+//   shared/max  ranked "Sharon Smith" above "K.W. Arrowsmith Co. Ltd." for "arowsmith"
+//   Dice        rejected "FSS Painters and Decorators Limited" for "paintr" at 0.195 — the
+//               query matched one word almost exactly, but the name has ~35 trigrams and a
+//               long name drags the score down. It offered "Zain Patel" instead, which
+//               shares two trigrams by coincidence: " pa" and "ain".
+//
+// Per-word distance has no such bias, discriminates far better (paintr→painters is 1,
+// paintr→patel is 4), and is three to five times faster because most comparisons exit on
+// the length check.
 
-// Dice, not shared/max. The obvious denominator penalises long names for being long:
-// "arowsmith" scored "Sharon Smith" above "K.W. Arrowsmith Co. Ltd.", and "biulders"
-// returned "James Saunders". Dice balances overlap against combined length and got all four
-// test typos right where the first attempt got two wrong.
-const FUZZY_MIN_SCORE = 0.25;
 const FUZZY_MAX_SUGGESTIONS = 8;
 
-function trigrams(value) {
-  const clean = ` ${value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim()} `;
-  const out = new Set();
-  for (let i = 0; i + 3 <= clean.length; i++) out.add(clean.slice(i, i + 3));
-  return out;
+// Tighter for short words: at four characters a distance of two is a different word, not a
+// typo. "cot" and "cat" are both real.
+function maxDistanceFor(word) {
+  if (word.length <= 3) return 0;
+  if (word.length <= 4) return 1;
+  return 2;
 }
 
-function similarity(a, b) {
-  let shared = 0;
-  for (const t of a) if (b.has(t)) shared++;
-  return (2 * shared) / (a.size + b.size);
+// Bounded Damerau-Levenshtein (optimal string alignment): returns max+1 as soon as it cannot
+// come in under the bound, so two unrelated words cost almost nothing.
+//
+// Transpositions count as ONE edit, not two, because swapping adjacent keys is the commonest
+// typing error there is. Under plain Levenshtein "smiht" scores 2 against both "smith" and
+// "swift", the tie breaks arbitrarily, and the counter is shown H.T. Swift Mechanical
+// Services. Counting the swap as one edit puts Smith first, where it belongs.
+function editDistance(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prevPrev = [];
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        cur[j] = Math.min(cur[j], prevPrev[j - 2] + 1);
+      }
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > max) return max + 1;
+    prevPrev = prev;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+function nameWords(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
 }
 
 export function fuzzySearch(term, branchIds, limit) {
-  const wanted = trigrams(term);
-  if (wanted.size < 3) return { rows: [], matchCount: 0, tookMs: 0, plan: [], warnings: [] };
+  // Legal forms are dropped here too: "buidlers ltd" should be judged on "buidlers".
+  const tokens = nameQuery(term).long.map((t) => t.norm).filter((t) => t.length >= 4);
+  if (!tokens.length) return { rows: [], matchCount: 0, tookMs: 0, plan: [], warnings: [] };
 
   const started = performance.now();
   const params = [];
   const scope = scopeClause(branchIds, params);
-  // id and name only: scoring 39k full rows would move far more data than it needs to.
   const candidates = db
     .query(`select c.id, c.name from customer c where 1 = 1${scope}`)
     .all(...params);
 
   const scored = [];
   for (const row of candidates) {
-    const score = similarity(wanted, trigrams(row.name));
-    if (score >= FUZZY_MIN_SCORE) scored.push({ id: row.id, score });
+    const words = nameWords(row.name);
+    let total = 0;
+    let ok = true;
+    for (const token of tokens) {
+      const bound = maxDistanceFor(token);
+      let best = bound + 1;
+      for (const word of words) {
+        const d = editDistance(token, word, bound);
+        if (d < best) best = d;
+        if (best === 0) break;
+      }
+      if (best > bound) {
+        ok = false;
+        break;
+      }
+      total += best;
+    }
+    // Every typed word has to be accounted for, or "paintr smith" would match any Smith.
+    if (ok) scored.push({ id: row.id, distance: total });
   }
-  scored.sort((a, b) => b.score - a.score);
+
+  scored.sort((a, b) => a.distance - b.distance);
   const top = scored.slice(0, Math.min(limit, FUZZY_MAX_SUGGESTIONS));
   if (!top.length) {
     return { rows: [], matchCount: 0, tookMs: Number((performance.now() - started).toFixed(2)), plan: [], warnings: [] };
   }
 
-  const byId = new Map(top.map((t) => [t.id, t.score]));
+  const byId = new Map(top.map((t) => [t.id, t.distance]));
   const rows = db
     .query(`${SELECT_CUSTOMER} where c.id in (${top.map(() => "?").join(",")})`)
     .all(...top.map((t) => t.id))
-    .map((r) => ({ ...r, similarity: Number(byId.get(r.id).toFixed(3)) }))
-    .sort((a, b) => b.similarity - a.similarity);
+    .map((r) => ({ ...r, edits: byId.get(r.id) }))
+    .sort((a, b) => a.edits - b.edits);
 
   return {
     rows,
