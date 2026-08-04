@@ -101,48 +101,64 @@ const FROM = `
     from product p
     join product_group g on g.id = p.product_group_id
     left join supplier s on s.id = p.default_supplier_id
-    left join product_branch pb on pb.product_id = p.id and pb.branch_id = ?1
+    left join product_branch pb on pb.product_id = p.id and pb.branch_id = ?
     left join product_price pp on pp.product_id = p.id and pp.tier = 1
     left join unit_of_measure u on u.id = pp.unit_of_measure_id`;
 
-// Ordering is the component's whole argument, so it lives in SQL rather than being re-sorted
-// in JS after a LIMIT has already thrown the interesting rows away.
-//
-//   1. an exact code beats everything — someone who typed a full code knows what they want
-//   2. then a code prefix, then a name hit
-//   3. within that, what the counter can actually sell now, in the order they can sell it
-//   4. not_permitted sinks to the bottom rather than being hidden: "why can I not find it"
-//      is a worse counter experience than seeing it greyed out with a reason
-const ORDER = `
-   order by case when lower(p.code) = lower(?2) then 0
-                 when lower(p.code) like lower(?2) || '%' then 1
-                 else 2 end,
+// Sequential `?` rather than numbered parameters. The numbered version worked but the
+// indices had to be computed from how many name tokens were present — `?${4 + tokens.length}`
+// — and every new clause shifted the arithmetic for the ones after it. Adding OFFSET to that
+// was going to break something silently. With sequential placeholders the only rule is that
+// params are pushed in the order the fragments appear in the finished SQL.
+
+// What a counter can sell now, in the order they can sell it. not_permitted sinks to the
+// bottom rather than being hidden: "why can I not find it" is worse than seeing it greyed.
+const BY_AVAILABILITY = `
             case pb.status when 'core' then 0 when 'stocked' then 1
                            when 'non_stock' then 2
                            when 'not_permitted' then 9
                            else case when (select count(*) from product_branch x
-                                            where x.product_id = p.id) > 0 then 3 else 4 end end,
-            p.name`;
+                                            where x.product_id = p.id) > 0 then 3 else 4 end end`;
 
-function matchClause(route, tokens) {
+// Ordering lives in SQL rather than being re-sorted in JS after a LIMIT has already thrown
+// the interesting rows away. `p.id` is the final tiebreak and is not decoration: without a
+// total order, two rows tying on name can swap between pages, so a product is shown twice
+// and another never at all. That only appears once paging exists, and looks like data loss.
+function orderSql(browsing) {
+  if (browsing) return ` order by${BY_AVAILABILITY}, p.name, p.id`;
+  // An exact code beats everything — someone who typed a full code knows what they want —
+  // then a code prefix, then a name hit.
+  return ` order by case when lower(p.code) = lower(?) then 0
+                 when lower(p.code) like lower(?) || '%' then 1
+                 else 2 end,${BY_AVAILABILITY}, p.name, p.id`;
+}
+
+function matchClause(route, term, tokens) {
   if (route === "barcode") {
-    return { sql: `(p.barcode_inner = ?3 or p.barcode_outer = ?3 or p.barcode_pallet = ?3)`, params: [] };
+    return {
+      sql: `(p.barcode_inner = ? or p.barcode_outer = ? or p.barcode_pallet = ?)`,
+      params: [term, term, term],
+    };
   }
-  // Numbered parameters restart at 3 because 1 is the branch and 2 is the raw term used by
-  // ORDER BY. Tokens then take 3, 4, 5 …
-  const parts = [`lower(p.code) like lower(?3) || '%'`];
-  const params = [];
-  const nameParts = tokens.map((_, i) => `p.name like ?${4 + i}`);
-  if (nameParts.length) parts.push(`(${nameParts.join(" and ")})`);
+  const parts = [`lower(p.code) like lower(?) || '%'`];
+  const params = [term];
+  if (tokens.length) {
+    parts.push(`(${tokens.map(() => `p.name like ?`).join(" and ")})`);
+    params.push(...tokens.map((t) => `%${t}%`));
+  }
   return { sql: `(${parts.join(" or ")})`, params };
 }
 
 /**
- * Search the catalogue as seen from one branch.
+ * Search the catalogue as seen from one branch, or browse it.
  *
  * scope "branch" restricts to what the branch ranges; "all" searches the whole catalogue and
  * reports each product's state at that branch anyway — which is what makes widening useful
  * rather than just longer.
+ *
+ * With no term but a group (or supplier) chosen, this browses instead of searching. A filter
+ * that returns nothing until you also type something is a filter that looks broken: picking
+ * "Top.Timber.Joinery.Sawn" is already a complete question.
  */
 export function searchProducts({
   term = "",
@@ -150,45 +166,63 @@ export function searchProducts({
   scope = "branch",
   groupPath = "",
   supplierId = null,
-  limit = 25,
+  limit = 20,
+  offset = 0,
 } = {}) {
   const routed = routeFor(term);
-  if (routed.route === "none" || routed.route === "too_short") {
-    return { route: routed.route, rows: [], total: 0, matchCount: 0, tookMs: 0, plan: [], warnings: [] };
+  const filtered = Boolean(groupPath || supplierId);
+  // A bare empty box is not a browse — the cold-start hint is more use than page 1 of 3,714.
+  // A filter is what turns it into one.
+  const browsing = filtered && (routed.route === "none" || routed.route === "too_short");
+
+  if (!browsing && (routed.route === "none" || routed.route === "too_short")) {
+    return {
+      route: routed.route, rows: [], total: 0, matchCount: 0,
+      tookMs: 0, plan: [], warnings: [],
+    };
   }
 
   // The minimum length guards the NAME search, not the route. A short code-ish term like
   // "04" is a useful prefix and costs an index seek; running `name like '%04%'` alongside it
   // is not the same search and not cheap — "pl" matched 525 products on two characters.
   // Measured on the whole term rather than per token, so "25 x 50" still works.
-  const nameable = routed.route !== "barcode" && routed.term.length >= MIN_NAME;
+  const nameable = !browsing && routed.route !== "barcode" && routed.term.length >= MIN_NAME;
   const tokens = nameable ? tokensOf(routed.term) : [];
-  const match = matchClause(routed.route, tokens);
 
-  const where = [match.sql];
+  const where = [];
+  const whereParams = [];
+  if (!browsing) {
+    const match = matchClause(routed.route, routed.term, tokens);
+    where.push(match.sql);
+    whereParams.push(...match.params);
+  }
   // Archived products are not sellable and are noise in a counter search.
   where.push(`p.status = 'active'`);
   if (scope === "branch") where.push(`pb.id is not null`);
-  if (groupPath) where.push(`(g.path = ?${4 + tokens.length} or g.path like ?${4 + tokens.length} || '.%')`);
-  if (supplierId) where.push(`p.default_supplier_id = ?${4 + tokens.length + (groupPath ? 1 : 0)}`);
-
-  const params = [
-    branchId ?? -1,
-    routed.term,
-    routed.term,
-    ...tokens.map((t) => `%${t}%`),
-    ...(groupPath ? [groupPath] : []),
-    ...(supplierId ? [supplierId] : []),
-  ];
+  if (groupPath) {
+    where.push(`(g.path = ? or g.path like ? || '.%')`);
+    whereParams.push(groupPath, groupPath);
+  }
+  if (supplierId) {
+    where.push(`p.default_supplier_id = ?`);
+    whereParams.push(supplierId);
+  }
 
   const whereSql = ` where ${where.join(" and ")}`;
-  const sql = `${SELECT}${FROM}${whereSql}${ORDER} limit ?${params.length + 1}`;
-  const result = measured("products.search", sql, [...params, limit]);
+  const order = orderSql(browsing);
+  const orderParams = browsing ? [] : [routed.term, routed.term];
+
+  // Params in the order the fragments appear: FROM, WHERE, ORDER BY, then the page window.
+  const sql = `${SELECT}${FROM}${whereSql}${order} limit ? offset ?`;
+  const result = measured("products." + (browsing ? "browse" : "search"), sql, [
+    branchId ?? -1, ...whereParams, ...orderParams, Math.max(1, limit), Math.max(0, offset),
+  ]);
 
   // How many matched, against how many came back. Reporting only the page is how a truncated
-  // result gets mistaken for the whole answer — the same bug the customer search shipped with.
+  // result gets mistaken for the whole answer — the same bug the customer search shipped
+  // with. With paging it is also what the page count is computed from.
   const countSql = `select count(*) as c ${FROM}${whereSql}`;
-  const matchCount = db.query(countSql).get(...params)?.c ?? result.total;
+  const matchCount = db.query(countSql).get(branchId ?? -1, ...whereParams)?.c ?? result.total;
 
   const rows = result.rows.map((row) => ({
     ...row,
@@ -201,28 +235,60 @@ export function searchProducts({
   return {
     ...result,
     rows,
-    route: routed.route,
+    route: browsing ? "browse" : routed.route,
     matchCount,
+    offset: Math.max(0, offset),
     truncated: matchCount > rows.length,
   };
 }
 
 // --- facets ------------------------------------------------------------------
 
-// Only groups that actually hold products, with the count a branch can see. A facet listing
-// 19 empty groups teaches people to ignore the facet.
-const GROUPS = `
-  select g.id, g.path, g.description, g.leaf,
+// Every group that holds something *anywhere beneath it*, not just directly.
+//
+// Products hang off leaf groups, so counting them per group offers only the 91 leaves —
+// `Top.Timber.Joinery.Sawn` but never `Top.Timber`. The parents are the useful browse
+// targets ("show me all timber"), the subtree filter already supports them, and leaving them
+// out of the list made a working feature unreachable from the UI.
+//
+// The counts are rolled up in JS rather than SQL. Doing the ancestor match as a self-join on
+// the materialised path (`cg.path like g.path || '.%'`) is a 109x109 cross product against
+// 3,714 products and measured 51 ms — ten times the harness warning threshold, for a facet
+// that reloads on every branch change. Counting leaves is a single grouped scan, and rolling
+// those up is ~12k string comparisons over 109 groups. A product belongs to exactly one
+// group, so summing descendant counts is exact rather than an approximation.
+const LEAF_GROUPS = `
+  select g.id, g.path,
          count(distinct p.id) as product_count,
          count(distinct case when pb.id is not null then p.id end) as ranged_count
     from product_group g
     join product p on p.product_group_id = g.id and p.status = 'active'
     left join product_branch pb on pb.product_id = p.id and pb.branch_id = ?1
-   group by g.id
-   order by g.path`;
+   group by g.id`;
 
 export function listProductGroups(branchId = null) {
-  return measured("products.groups", GROUPS, [branchId ?? -1]);
+  const started = performance.now();
+  const direct = measured("products.groups", LEAF_GROUPS, [branchId ?? -1]);
+  const all = db.query(`select id, path, description, leaf from product_group order by path`).all();
+
+  const rows = [];
+  for (const g of all) {
+    const prefix = `${g.path}.`;
+    let product_count = 0;
+    let ranged_count = 0;
+    for (const d of direct.rows) {
+      if (d.path === g.path || d.path.startsWith(prefix)) {
+        product_count += d.product_count;
+        ranged_count += d.ranged_count;
+      }
+    }
+    // A group holding nothing anywhere beneath it is not a filter anybody wants offered.
+    if (product_count > 0) rows.push({ ...g, product_count, ranged_count });
+  }
+
+  // Reported including the rollup, not just the SQL — the harness timing should be what the
+  // caller actually waited for.
+  return { ...direct, rows, total: rows.length, tookMs: Number((performance.now() - started).toFixed(2)) };
 }
 
 // Suppliers that supply something, with how much of it this branch ranges.

@@ -242,6 +242,63 @@ const SCENARIOS = [
     props: (row) => ({ productId: row.id, tallyLengths: null, packSize: null }),
   },
 
+  // find-product — the interesting states are all about ranging, and none of them are
+  // reachable by typing into an empty box without knowing the data first.
+  {
+    id: "product-specialist-branch",
+    component: "find-product",
+    label: "Specialist branch — where availability differs most",
+    // The branch that HOLDS what other branches only obtain — not simply the one ranging the
+    // most lines, which is a different branch. This is where the five states differ from one
+    // another rather than all reading "In range".
+    resolve: () => db.query(`select pb.branch_id as id from product_branch pb
+                              where pb.status in ('core','stocked')
+                                and pb.product_id in (select product_id from product_branch
+                                                       where status = 'non_stock')
+                              group by pb.branch_id order by count(*) desc limit 1`).get(),
+    props: (row) => ({ workingBranchId: row.id, scope: "branch", groupPath: "", collapseOnSelect: false }),
+  },
+  {
+    id: "product-blocked-branch",
+    component: "find-product",
+    label: "A branch with a line it may not sell",
+    // Search the code shown to see the not_permitted state; it is greyed and refuses
+    // selection rather than being hidden.
+    resolve: () => db.query(`select pb.branch_id as id, p.code from product_branch pb
+                              join product p on p.id = pb.product_id
+                             where pb.status = 'not_permitted' limit 1`).get(),
+    props: (row) => ({ workingBranchId: row.id, scope: "all", groupPath: "", collapseOnSelect: false }),
+    note: (row) => `Search ${row.code} — this branch may not sell it.`,
+  },
+  {
+    id: "product-browse-group",
+    component: "find-product",
+    label: "Browse a group, no search term",
+    // The largest group the busiest branch ranges — enough rows to need the pager.
+    resolve: () => db.query(`select pb.branch_id as id, 'Top.Timber' as path from product_branch pb
+                             group by pb.branch_id order by count(*) desc limit 1`).get(),
+    props: (row) => ({ workingBranchId: row.id, scope: "branch", groupPath: row.path, collapseOnSelect: false }),
+  },
+  {
+    id: "product-collapse-on-select",
+    component: "find-product",
+    label: "Collapse on select — the flow shape",
+    // How the counter-sale flow mounts it. Worth having as a preset: the collapsed state has
+    // its own ways back out (Back to results, New search, Escape, or just retyping) and they
+    // are easy to leave broken because the component page does not use them.
+    resolve: () => db.query(`select branch_id as id from product_branch group by branch_id
+                              order by count(*) desc limit 1`).get(),
+    props: (row) => ({ workingBranchId: row.id, scope: "branch", collapseOnSelect: true, groupPath: "" }),
+  },
+  {
+    id: "product-thin-range",
+    component: "find-product",
+    label: "Branch with the thinnest range",
+    resolve: () => db.query(`select branch_id as id from product_branch group by branch_id
+                              order by count(*) asc limit 1`).get(),
+    props: (row) => ({ workingBranchId: row.id, scope: "branch", groupPath: "", collapseOnSelect: false }),
+  },
+
   // credit-status — the verdicts that change what a counter hand does.
   {
     id: "credit-ok",

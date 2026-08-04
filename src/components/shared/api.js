@@ -74,9 +74,11 @@ export function createApi({ base = "" } = {}) {
 
     // Catalogue search as seen from one branch. `scope` is branch | all — every row reports
     // its availability at that branch either way, which is what makes widening worth doing.
-    searchProducts: ({ term, branchId, scope, groupPath, supplierId, limit } = {}) =>
+    searchProducts: ({ term, branchId, scope, groupPath, supplierId, limit, offset } = {}) =>
       get("/api/products", {
         q: term, branch: branchId, scope, group: groupPath, supplier: supplierId, limit,
+        // 0 is a real offset; the query builder drops empty strings, not zeroes.
+        offset: offset || undefined,
       }),
     listProductGroups: ({ branchId } = {}) => get("/api/products/groups", { branch: branchId }),
     listProductSuppliers: ({ branchId } = {}) => get("/api/products/suppliers", { branch: branchId }),

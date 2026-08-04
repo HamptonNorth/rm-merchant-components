@@ -77,7 +77,7 @@ const PER_LABEL = {
 };
 
 export class MerchantFindProduct extends MerchantElement {
-  static version = "0.1.0";
+  static version = "0.2.1";
 
   static styles = [
     ...MerchantElement.styles,
@@ -93,7 +93,7 @@ export class MerchantFindProduct extends MerchantElement {
     workingBranchId: { type: Number, attribute: "working-branch-id" },
     scope: { type: String },
     groupPath: { type: String, attribute: "group-path" },
-    limit: { type: Number },
+    pageSize: { type: Number, attribute: "page-size" },
     heading: { type: String },
     placeholder: { type: String },
     dense: { type: Boolean },
@@ -110,15 +110,16 @@ export class MerchantFindProduct extends MerchantElement {
     searching: { state: true },
     matchCount: { state: true },
     truncated: { state: true },
+    page: { state: true },
   };
 
   static harnessSchema = [
     {
       name: "workingBranchId",
       type: "number",
-      default: 13,
+      default: 7,
       description:
-        "The branch this counter is working from, from <merchant-working-branch>. Branch 13 (Leeds) is the specialist branch — it ranges a whole category the others only obtain, so it is where the availability states differ most.",
+        "The branch this counter is working from, from <merchant-working-branch>. This is a branch id, not a branch code — they differ, and code 13 is id 7. Which branch is the specialist is chosen at generation time, so use the \u201CSpecialist branch\u201D scenario rather than trusting this default after a regeneration.",
     },
     {
       name: "scope",
@@ -160,7 +161,13 @@ export class MerchantFindProduct extends MerchantElement {
       default: false,
       description: "Alternating row shading. Worth turning on with dense.",
     },
-    { name: "limit", type: "number", default: 25, description: "Rows to return. The API caps at 500." },
+    {
+      name: "pageSize",
+      type: "number",
+      default: 20,
+      description:
+        "Results per page. Browsing a group is what needs this — Top.Timber is 272 lines at one branch, and no counter scrolls that. The API caps a page at 500.",
+    },
   ];
 
   #debounce = null;
@@ -171,7 +178,7 @@ export class MerchantFindProduct extends MerchantElement {
     this.workingBranchId = null;
     this.scope = "branch";
     this.groupPath = "";
-    this.limit = 25;
+    this.pageSize = 20;
     this.heading = "Find product";
     this.placeholder = "Code, name or barcode";
     this.dense = false;
@@ -188,6 +195,11 @@ export class MerchantFindProduct extends MerchantElement {
     this.searching = false;
     this.matchCount = 0;
     this.truncated = false;
+    this.page = 1;
+  }
+
+  get totalPages() {
+    return Math.max(1, Math.ceil(this.matchCount / Math.max(1, this.pageSize)));
   }
 
   connectedCallback() {
@@ -197,13 +209,23 @@ export class MerchantFindProduct extends MerchantElement {
 
   updated(changed) {
     if (changed.has("workingBranchId") || changed.has("api")) this.loadFacets();
+    // Anything that changes what is being looked at invalidates the page number: staying on
+    // page 7 after switching to a group with three pages shows an empty list and reads as a
+    // bug. The group is included because picking one is now a search in its own right.
     if (
       changed.has("scope") ||
       changed.has("workingBranchId") ||
       changed.has("groupPath") ||
+      changed.has("pageSize") ||
       changed.has("api")
     ) {
-      if (this.term) this.search({ immediate: true });
+      // The selected card states availability, which is a per-branch fact. After a branch or
+      // scope change it is not stale, it is wrong.
+      if (changed.has("workingBranchId") || changed.has("scope") || changed.has("groupPath")) {
+        this.selectedRow = null;
+      }
+      this.page = 1;
+      if (this.term || this.groupPath) this.search({ immediate: true });
     }
   }
 
@@ -226,6 +248,12 @@ export class MerchantFindProduct extends MerchantElement {
 
   onInput(event) {
     this.term = event.target.value;
+    // Typing is a new question, so it starts at the beginning of the answer, and abandons
+    // the current pick. Clearing this here rather than in runSearch is the whole point:
+    // runSearch returns early on an empty box, so emptying it used to leave the selected
+    // card on screen with no results, no hint and nothing to search from.
+    this.selectedRow = null;
+    this.page = 1;
     this.search();
   }
 
@@ -238,16 +266,18 @@ export class MerchantFindProduct extends MerchantElement {
 
   async runSearch() {
     const term = this.term.trim();
-    if (!term) {
+    // No term and no filter is the cold start, not a browse — the hint is more use than
+    // page 1 of the whole catalogue. A group makes it a browse.
+    if (!term && !this.groupPath) {
       this.results = [];
       this.route = "none";
       this.activeIndex = -1;
       this.matchCount = 0;
       this.truncated = false;
+      this.page = 1;
       return;
     }
 
-    this.selectedRow = null;
     const seq = ++this.#sequence;
     this.searching = true;
     const result = await this.load(() =>
@@ -256,7 +286,8 @@ export class MerchantFindProduct extends MerchantElement {
         branchId: this.workingBranchId ?? undefined,
         scope: this.scope,
         groupPath: this.groupPath || undefined,
-        limit: this.limit,
+        limit: this.pageSize,
+        offset: (this.page - 1) * this.pageSize,
       }),
     );
     if (seq !== this.#sequence) return;
@@ -269,6 +300,20 @@ export class MerchantFindProduct extends MerchantElement {
     // A barcode resolves to exactly one product, so pre-arm it for the Enter that the
     // scanner itself sends.
     this.activeIndex = this.route === "barcode" && this.results.length ? 0 : -1;
+
+    // A page beyond the end returns nothing, which looks like "no results" rather than
+    // "you have gone too far". Happens when the row count shrinks under a filter change.
+    if (!this.results.length && this.page > 1 && this.matchCount > 0) {
+      this.goTo(this.totalPages);
+    }
+  }
+
+  goTo(page) {
+    const target = Math.min(Math.max(1, Math.round(page) || 1), this.totalPages);
+    if (target === this.page) return;
+    this.page = target;
+    this.activeIndex = -1;
+    this.search({ immediate: true });
   }
 
   onKeyDown(event) {
@@ -283,9 +328,7 @@ export class MerchantFindProduct extends MerchantElement {
       event.preventDefault();
       this.select(this.results[this.activeIndex]);
     } else if (event.key === "Escape") {
-      this.term = "";
-      this.results = [];
-      this.route = "none";
+      this.newSearch();
     }
   }
 
@@ -314,12 +357,37 @@ export class MerchantFindProduct extends MerchantElement {
     if (this.scope !== "branch") this.scope = "branch";
   }
 
+  // Back to the list this was picked from — for "wrong one of these", which is not the same
+  // as "wrong search".
   reopen() {
     this.selectedRow = null;
   }
 
+  // Start over. The box keeps the old term after a pick, so without this the only way to
+  // search for something else is to select the text and overtype it.
+  newSearch() {
+    this.term = "";
+    this.selectedRow = null;
+    this.results = [];
+    this.route = "none";
+    this.matchCount = 0;
+    this.truncated = false;
+    this.page = 1;
+    this.activeIndex = -1;
+    // Focus follows the action: clearing the box is only ever a prelude to typing in it.
+    this.updateComplete.then(() => this.shadowRoot?.querySelector("input[type=search]")?.focus());
+  }
+
   onGroupChange(event) {
     this.groupPath = event.target.value;
+  }
+
+  onPageInput(event) {
+    const n = Number(event.target.value);
+    if (Number.isFinite(n)) this.goTo(n);
+    // Snap the box back to whatever page actually loaded, so a typed 99 does not sit there
+    // claiming to be the current page.
+    event.target.value = String(this.page);
   }
 
   // Price, unit and the multi-unit marker are one non-breaking group. Spaced apart they read
@@ -423,13 +491,23 @@ export class MerchantFindProduct extends MerchantElement {
         </div>
         <p class="mt-2 text-xs text-slate-500 dark:text-slate-400">
           ${a.hint}.
+          ${this.results.length > 1
+            ? html`<button
+                part="reopen"
+                type="button"
+                class="ml-1 font-medium text-sky-700 underline hover:no-underline dark:text-sky-300"
+                @click=${() => this.reopen()}
+              >
+                Back to results
+              </button>`
+            : nothing}
           <button
-            part="reopen"
+            part="new-search"
             type="button"
-            class="ml-1 font-medium text-sky-700 underline hover:no-underline dark:text-sky-300"
-            @click=${() => this.reopen()}
+            class="ml-2 font-medium text-sky-700 underline hover:no-underline dark:text-sky-300"
+            @click=${() => this.newSearch()}
           >
-            Change
+            New search
           </button>
         </p>
       </div>
@@ -442,12 +520,71 @@ export class MerchantFindProduct extends MerchantElement {
     const shown = this.results.length;
     const total = Math.max(this.matchCount, shown);
     const fmt = (n) => n.toLocaleString("en-GB");
-    if (!this.truncated) return html`· ${fmt(shown)} ${shown === 1 ? "match" : "matches"}`;
-    return html`·
-      <span class="font-medium text-amber-700 dark:text-amber-300"
-        >${fmt(shown)} of ${fmt(total)} matches</span
+
+    if (total <= shown) return html`· ${fmt(shown)} ${shown === 1 ? "match" : "matches"}`;
+    // Which rows these are, not just how many exist. "21–40 of 272" tells you where you are
+    // in the answer; "20 of 272" leaves you guessing whether you have seen the first twenty
+    // or some arbitrary twenty.
+    const from = (this.page - 1) * this.pageSize + 1;
+    return html`· ${fmt(from)}–${fmt(from + shown - 1)} of ${fmt(total)}`;
+  }
+
+  // Paging is what makes browsing a group usable: Top.Timber is 272 lines at one branch.
+  // First and Last are not padding — jumping to the end of an alphabetical list is how you
+  // check you filtered the right group without dragging through every page.
+  renderPager() {
+    if (this.selectedRow && this.collapseOnSelect) return nothing;
+    const pages = this.totalPages;
+    if (pages <= 1 || !this.results.length) return nothing;
+
+    const btn = (label, target, { disabled = false, title = "" } = {}) => html`
+      <button
+        part="page-${label.toLowerCase().replace(/[^a-z]/g, "") || "n"}"
+        type="button"
+        title=${title}
+        ?disabled=${disabled}
+        class="rounded border border-slate-300 px-2 py-1 font-medium
+               disabled:cursor-not-allowed disabled:opacity-40
+               enabled:hover:bg-slate-100 dark:border-slate-700 dark:enabled:hover:bg-slate-800"
+        @click=${() => this.goTo(target)}
       >
-      — narrow the search to see the rest`;
+        ${label}
+      </button>
+    `;
+    const first = this.page === 1;
+    const last = this.page === pages;
+
+    return html`
+      <nav
+        part="pager"
+        aria-label="Result pages"
+        class="mt-2 flex flex-wrap items-center justify-center gap-1 text-xs text-slate-600 dark:text-slate-300"
+      >
+        ${btn("« First", 1, { disabled: first, title: "First page" })}
+        ${btn("‹ Prev", this.page - 1, { disabled: first, title: "Previous page" })}
+        <span class="mx-1 flex items-center gap-1">
+          Page
+          <input
+            part="page-input"
+            type="number"
+            min="1"
+            max=${pages}
+            .value=${String(this.page)}
+            aria-label="Page number"
+            class="w-14 rounded border border-slate-300 px-1 py-1 text-center tabular-nums
+                   dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            @change=${(e) => this.onPageInput(e)}
+            @keydown=${(e) => {
+              // Enter inside the pager must not reach the results list and select a row.
+              if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); this.onPageInput(e); }
+            }}
+          />
+          of ${pages.toLocaleString("en-GB")}
+        </span>
+        ${btn("Next ›", this.page + 1, { disabled: last, title: "Next page" })}
+        ${btn("Last »", pages, { disabled: last, title: "Last page" })}
+      </nav>
+    `;
   }
 
   renderGroupFilter() {
@@ -475,12 +612,27 @@ export class MerchantFindProduct extends MerchantElement {
   }
 
   renderHint() {
-    if (this.route === "too_short") return "Keep typing — 3 characters for a name, 2 for a code.";
-    if (this.route === "none") return "Type a product code or name, or scan a barcode.";
+    const browsable = this.showGroupFilter && this.groups.length ? ", or pick a group to browse" : "";
+    if (this.route === "too_short") {
+      return `Keep typing — 3 characters for a name, 2 for a code${browsable}.`;
+    }
+    if (this.route === "none") return `Type a product code or name, or scan a barcode${browsable}.`;
     return null;
   }
 
   renderEmptyResult() {
+    // Browsing a group that is empty here is a different message from a search that missed:
+    // there is nothing to rephrase, only somewhere else to look.
+    if (this.route === "browse" && this.scope === "branch") {
+      return html`This branch ranges nothing in ${this.groupPath}.
+        <button
+          type="button"
+          class="font-medium text-sky-700 underline hover:no-underline dark:text-sky-300"
+          @click=${() => this.widen()}
+        >
+          Browse the whole catalogue
+        </button>`;
+    }
     // The distinction that matters: nothing here versus nothing anywhere. Only the first is
     // worth widening for, and saying so saves a pointless second search.
     if (this.scope === "branch") {
@@ -586,6 +738,7 @@ export class MerchantFindProduct extends MerchantElement {
                   >
                     ${this.results.map((row, i) => this.renderRow(row, i))}
                   </ul>
+                  ${this.renderPager()}
                 `
               : html`<p part="empty" class="mt-2 text-xs text-slate-500 dark:text-slate-400">
                   ${this.renderEmptyResult()}

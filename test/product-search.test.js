@@ -196,3 +196,86 @@ test("the range summary explains an empty branch-scoped search", () => {
   expect(s.ranged).toBeLessThan(s.catalogue);
   expect(s.core + s.stocked + s.non_stock + s.not_permitted).toBe(s.ranged);
 });
+
+// --- browsing and paging -----------------------------------------------------
+
+test("a group with no term browses; a bare empty box does not", () => {
+  // Picking a group is already a complete question. A filter that returns nothing until you
+  // also type something is a filter that looks broken.
+  const browse = searchProducts({ branchId: BRANCH, scope: "branch", groupPath: "Top.Timber", limit: 20 });
+  expect(browse.route).toBe("browse");
+  expect(browse.rows.length).toBeGreaterThan(0);
+  expect(browse.matchCount).toBeGreaterThan(browse.rows.length);
+
+  // But an empty box with no filter stays a cold start — the hint is more use than page 1
+  // of the whole catalogue.
+  const cold = searchProducts({ branchId: BRANCH, scope: "branch", limit: 20 });
+  expect(cold.route).toBe("none");
+  expect(cold.rows).toEqual([]);
+});
+
+test("paging neither repeats nor drops a row", () => {
+  // The failure this guards is subtle: without a total order, rows tying on name swap
+  // between pages, so one product appears twice and another never appears at all. It only
+  // shows up once paging exists, and it looks like data loss rather than a sort bug.
+  const opts = { branchId: BRANCH, scope: "branch", groupPath: "Top.Timber" };
+  const all = searchProducts({ ...opts, limit: 1000 }).rows.map((r) => r.id);
+  expect(all.length).toBeGreaterThan(40);
+
+  const paged = [];
+  for (let offset = 0; offset < all.length; offset += 20) {
+    paged.push(...searchProducts({ ...opts, limit: 20, offset }).rows.map((r) => r.id));
+  }
+  expect(paged).toEqual(all);
+  expect(new Set(paged).size).toBe(all.length);
+});
+
+test("matchCount is the whole answer on every page, so the page count is stable", () => {
+  const opts = { branchId: BRANCH, scope: "branch", groupPath: "Top.Timber", limit: 20 };
+  const first = searchProducts({ ...opts, offset: 0 });
+  const later = searchProducts({ ...opts, offset: 40 });
+  expect(later.matchCount).toBe(first.matchCount);
+  expect(later.offset).toBe(40);
+});
+
+test("an offset past the end returns nothing rather than throwing", () => {
+  const r = searchProducts({ branchId: BRANCH, scope: "branch", groupPath: "Top.Timber", limit: 20, offset: 100000 });
+  expect(r.rows).toEqual([]);
+  expect(r.matchCount).toBeGreaterThan(0);
+});
+
+test("browsing still reports availability, and still honours the branch scope", () => {
+  const scoped = searchProducts({ branchId: BRANCH, scope: "branch", groupPath: "Top.Timber", limit: 100 });
+  for (const row of scoped.rows) {
+    expect(["held", "to_order", "blocked"]).toContain(row.availability);
+    expect(row.group_path === "Top.Timber" || row.group_path.startsWith("Top.Timber.")).toBe(true);
+  }
+  const all = searchProducts({ branchId: BRANCH, scope: "all", groupPath: "Top.Timber", limit: 100 });
+  expect(all.matchCount).toBeGreaterThan(scoped.matchCount);
+});
+
+test("the group facet offers parents, not just leaves", () => {
+  // Products hang off leaf groups, so counting per group offers only leaves and the useful
+  // browse targets — "all timber" — are unreachable from the UI even though the subtree
+  // filter supports them.
+  const groups = listProductGroups(BRANCH);
+  const parents = groups.rows.filter((g) => !g.leaf);
+  expect(parents.length).toBeGreaterThan(0);
+  expect(groups.rows.some((g) => g.path === "Top.Timber")).toBe(true);
+});
+
+test("every facet count equals what browsing that group returns", () => {
+  // The facet says "272" and the browse must then show 272. These are computed two different
+  // ways — a JS rollup over leaf counts, and a SQL subtree LIKE — so nothing but a test keeps
+  // them honest.
+  const groups = listProductGroups(BRANCH);
+  const sample = ["Top", "Top.Timber", ...groups.rows.filter((g) => !g.leaf).slice(0, 4).map((g) => g.path)];
+  for (const path of new Set(sample)) {
+    const facet = groups.rows.find((g) => g.path === path);
+    if (!facet) continue;
+    const browsed = searchProducts({ branchId: BRANCH, scope: "branch", groupPath: path, limit: 1 });
+    expect(browsed.matchCount, `${path} facet says ${facet.ranged_count}`).toBe(facet.ranged_count);
+    const all = searchProducts({ branchId: BRANCH, scope: "all", groupPath: path, limit: 1 });
+    expect(all.matchCount, `${path} catalogue count`).toBe(facet.product_count);
+  }
+});

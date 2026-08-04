@@ -48,8 +48,9 @@ products.get("/", (c) => {
   const scope = c.req.query("scope") ?? "branch";
   const rawBranch = c.req.query("branch");
   const branchId = rawBranch ? Number(rawBranch) : null;
-  const requested = Number(c.req.query("limit") ?? 25) || 25;
+  const requested = Number(c.req.query("limit") ?? 20) || 20;
   const limit = Math.min(requested, MAX_LIMIT);
+  const offset = Math.max(0, Number(c.req.query("offset") ?? 0) || 0);
 
   if (!SCOPES.has(scope)) {
     return c.json({ error: `scope must be one of ${[...SCOPES].join(", ")}` }, 400);
@@ -67,6 +68,7 @@ products.get("/", (c) => {
     groupPath: c.req.query("group") ?? "",
     supplierId: c.req.query("supplier") ? Number(c.req.query("supplier")) : null,
     limit,
+    offset,
   });
 
   return c.json(
@@ -75,6 +77,7 @@ products.get("/", (c) => {
       scope,
       term,
       matchCount: result.matchCount ?? result.total,
+      offset,
       limit,
       limitRequested: requested,
       limitCapped: requested > MAX_LIMIT,
