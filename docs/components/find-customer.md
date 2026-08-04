@@ -2,7 +2,7 @@
 
 `<merchant-find-customer>` — one text box at the trade counter.
 
-## Current version: 0.1.0
+## Current version: 0.2.0
 
 The same box has to sell a 50p bolt for cash and 20 pallets of bricks on a credit account,
 so it routes on what was typed rather than making anyone pick a search mode first.
@@ -105,6 +105,7 @@ workingBranch.addEventListener("merchant-working-branch-changed", (e) => {
 | `scope` | `scope` | `branch` \| `neighbours` \| `all` | `branch` | Search scope. The widen control steps through these. |
 | `heading` | `heading` | string | `"Find customer"` | Blank hides it. |
 | `placeholder` | `placeholder` | string | … | Input placeholder. |
+| `collapseOnSelect` | `collapse-on-select` | boolean | `false` | Hide the results once a customer is chosen. See below. |
 | `dense` | `dense` | boolean | `false` | Tighter rows — 49 px against 59 px, about a third more on screen. |
 | `zebra` | `zebra` | boolean | `false` | Alternating row shading. See below. |
 | `limit` | `limit` | number | `25` | Rows to return. The API caps at 500 and says when it did. |
@@ -128,6 +129,20 @@ to the counter cash account.
 
 Input is debounced at 180 ms, and out-of-order responses are discarded — a slower earlier
 request cannot overwrite a faster later one.
+
+## Collapsing after a choice
+
+`collapseOnSelect` hides the result list once a customer is picked and shows the choice in
+its place, with a **Change** link. Off by default.
+
+The distinction is what the screen is for. In a sequence — the counter-sale flow — the search
+has done its job the moment a customer is chosen, and leaving twenty-five other builders on
+screen invites a second, wrong click on the way down the page. On the component page, where
+browsing and comparing is the point, the list stays.
+
+The typed term survives the collapse, so **Change** re-opens the same results rather than
+making anyone retype. Typing again also re-opens it: the collapse is a resting state, not a
+lock.
 
 ## Density and zebra
 
@@ -197,6 +212,13 @@ so the server must re-check on any write. Showing a customer is not authorising 
 them.
 
 ## Changelog
+
+### 0.2.0 — 2026-08-04
+
+Added `collapseOnSelect`, `dense` and `zebra`. Added `matchCount` / `truncated` reporting so
+a truncated page is never shown as though it were the whole answer, and raised the API
+ceiling from 100 to 500 with the cap reported rather than applied silently. Name search now
+matches part-words in any order, scoped to the name column.
 
 ### 0.1.0 — 2026-08-03
 

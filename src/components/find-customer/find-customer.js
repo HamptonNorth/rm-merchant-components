@@ -30,7 +30,7 @@ const SCOPE_LABEL = {
 };
 
 export class MerchantFindCustomer extends MerchantElement {
-  static version = "0.1.0";
+  static version = "0.2.0";
 
   static styles = [
     ...MerchantElement.styles,
@@ -50,6 +50,8 @@ export class MerchantFindCustomer extends MerchantElement {
     placeholder: { type: String },
     dense: { type: Boolean },
     zebra: { type: Boolean },
+    collapseOnSelect: { type: Boolean, attribute: "collapse-on-select" },
+    selectedRow: { attribute: false, state: true },
     term: { state: true },
     results: { attribute: false, state: true },
     route: { state: true },
@@ -87,6 +89,13 @@ export class MerchantFindCustomer extends MerchantElement {
       description: "Input placeholder.",
     },
     {
+      name: "collapseOnSelect",
+      type: "boolean",
+      default: false,
+      description:
+        "Hide the results once a customer is picked, showing just the choice. For a flow where the search has done its job; off for a screen where you browse and compare.",
+    },
+    {
       name: "dense",
       type: "boolean",
       default: false,
@@ -114,6 +123,8 @@ export class MerchantFindCustomer extends MerchantElement {
     this.placeholder = "Name, postcode, account code, or 1–9";
     this.dense = false;
     this.zebra = false;
+    this.collapseOnSelect = false;
+    this.selectedRow = null;
     this.term = "";
     this.results = [];
     this.route = "none";
@@ -152,6 +163,7 @@ export class MerchantFindCustomer extends MerchantElement {
       return;
     }
 
+    this.selectedRow = null;
     const seq = ++this.#sequence;
     this.searching = true;
     const result = await this.load(() =>
@@ -194,6 +206,13 @@ export class MerchantFindCustomer extends MerchantElement {
 
   select(row) {
     if (!row) return;
+    // The search has done its job; keeping twenty-five other builders on screen invites a
+    // second, wrong click. The term stays so re-opening does not mean retyping.
+    if (this.collapseOnSelect) {
+      this.selectedRow = row;
+      this.results = [];
+      this.activeIndex = -1;
+    }
     this.emit("merchant-customer-selected", {
       id: row.id,
       accountCode: row.account_code,
@@ -219,6 +238,37 @@ export class MerchantFindCustomer extends MerchantElement {
   narrow() {
     this.scope = "branch";
     this.emit("merchant-customer-search-widened", { scope: "branch", term: this.term });
+  }
+
+  // What was chosen, in place of the list. Without this the box just empties and it is not
+  // obvious anything was selected.
+  renderSelected() {
+    const row = this.selectedRow;
+    return html`
+      <div
+        part="selected"
+        class="mt-2 flex flex-wrap items-baseline gap-x-2 rounded-merchant border border-l-2 border-l-accent
+               border-slate-200 bg-accent-soft px-3 py-2 dark:border-slate-700 dark:bg-slate-800"
+      >
+        <span class="font-mono text-xs text-slate-500 dark:text-slate-400">${row.account_code}</span>
+        <span class="font-medium text-slate-900 dark:text-slate-100">${row.name}</span>
+        <span class="flex shrink-0 items-center gap-1">${this.renderBadges(row)}</span>
+        <button
+          part="change"
+          type="button"
+          class="ml-auto text-xs font-medium text-sky-700 hover:underline dark:text-sky-300"
+          @click=${() => this.reopen()}
+        >
+          Change
+        </button>
+      </div>
+    `;
+  }
+
+  reopen() {
+    this.selectedRow = null;
+    this.runSearch();
+    this.renderRoot.querySelector("input")?.focus();
   }
 
   renderBadges(row) {
@@ -299,6 +349,7 @@ export class MerchantFindCustomer extends MerchantElement {
   // "25 matches" when a truncated page actually stands for 2,169 of them is the kind of
   // half-truth that stops someone refining a search they should refine.
   renderCount() {
+    if (this.selectedRow) return nothing;
     if (this.route === "none" || this.route === "too_short" || !this.results.length) return nothing;
     const shown = this.results.length;
     const total = Math.max(this.matchCount, shown);
@@ -389,7 +440,9 @@ export class MerchantFindCustomer extends MerchantElement {
 
         ${this.error ? this.renderError(this.error, { onRetry: () => this.runSearch() }) : nothing}
 
-        ${hint
+        ${this.selectedRow
+          ? this.renderSelected()
+          : hint
           ? html`<p part="hint" class="mt-2 text-xs text-slate-500 dark:text-slate-400">${hint}</p>`
           : this.results.length
             ? html`<ul

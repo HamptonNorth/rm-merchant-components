@@ -30,7 +30,10 @@ export const flows = [
         component: "find-customer",
         note: "Find the customer",
         needs: ["workingBranchId"],
-        props: (ctx) => ({ workingBranchId: ctx.workingBranchId }),
+        // Collapse the results once a customer is chosen: in a sequence the search has done
+        // its job, and leaving the list up invites a second, wrong click on the way down the
+        // page. On the component page it stays open, where browsing is the point.
+        props: (ctx) => ({ workingBranchId: ctx.workingBranchId, collapseOnSelect: true }),
         emits: {
           "merchant-customer-selected": (d) => ({
             customerId: d.id,
