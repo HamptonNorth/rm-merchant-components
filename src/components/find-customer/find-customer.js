@@ -53,6 +53,8 @@ export class MerchantFindCustomer extends MerchantElement {
     route: { state: true },
     activeIndex: { state: true },
     searching: { state: true },
+    matchCount: { state: true },
+    truncated: { state: true },
   };
 
   static harnessSchema = [
@@ -100,6 +102,8 @@ export class MerchantFindCustomer extends MerchantElement {
     this.route = "none";
     this.activeIndex = -1;
     this.searching = false;
+    this.matchCount = 0;
+    this.truncated = false;
   }
 
   updated(changed) {
@@ -126,6 +130,8 @@ export class MerchantFindCustomer extends MerchantElement {
       this.results = [];
       this.route = "none";
       this.activeIndex = -1;
+      this.matchCount = 0;
+      this.truncated = false;
       return;
     }
 
@@ -145,6 +151,8 @@ export class MerchantFindCustomer extends MerchantElement {
     this.searching = false;
     this.results = result?.rows ?? [];
     this.route = result?.route ?? "none";
+    this.matchCount = result?.matchCount ?? this.results.length;
+    this.truncated = Boolean(result?.truncated);
     // A quick code resolves to exactly one account, so pre-arm it for Enter.
     this.activeIndex = this.route === "quick_code" && this.results.length ? 0 : -1;
   }
@@ -260,6 +268,24 @@ export class MerchantFindCustomer extends MerchantElement {
     `;
   }
 
+  // "25 matches" when a truncated page actually stands for 2,169 of them is the kind of
+  // half-truth that stops someone refining a search they should refine.
+  renderCount() {
+    if (this.route === "none" || this.route === "too_short" || !this.results.length) return nothing;
+    const shown = this.results.length;
+    const total = Math.max(this.matchCount, shown);
+    const fmt = (n) => n.toLocaleString("en-GB");
+
+    if (!this.truncated) {
+      return html`· ${fmt(shown)} ${shown === 1 ? "match" : "matches"}`;
+    }
+    return html`·
+      <span class="font-medium text-amber-700 dark:text-amber-300"
+        >${fmt(shown)} of ${fmt(total)} matches</span
+      >
+      — narrow the search to see the rest`;
+  }
+
   renderHint() {
     if (this.route === "too_short") {
       return "Keep typing — 4 characters for a name, 3 for a postcode.";
@@ -307,10 +333,7 @@ export class MerchantFindCustomer extends MerchantElement {
         <div class="mt-1.5 flex flex-wrap items-baseline justify-between gap-2 text-xs">
           <span part="scope" class="text-slate-500 dark:text-slate-400">
             Searching ${SCOPE_LABEL[this.scope]}${this.searching ? " …" : ""}
-            ${this.route !== "none" && this.route !== "too_short" && this.results.length
-              ? html`· ${this.results.length}
-                  ${this.results.length === 1 ? "match" : "matches"}`
-              : nothing}
+            ${this.renderCount()}
           </span>
           <span class="flex items-center gap-2">
             ${this.scope !== "branch"

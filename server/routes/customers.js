@@ -6,6 +6,11 @@ import { isDev } from "../db.js";
 
 const SCOPES = new Set(["branch", "neighbours", "all"]);
 
+// The ceiling exists so one search cannot ask for 39,000 rows. It is reported rather than
+// applied quietly: `limit=500` silently becoming 100 is indistinguishable from a bug, which
+// is exactly how it was first found.
+const MAX_LIMIT = 500;
+
 function envelope(result, extra = {}) {
   const { query, rows, total, tookMs, plan, warnings } = result;
   const base = isDev ? { query, rows, total, tookMs, plan, warnings } : { rows, total, tookMs };
@@ -29,7 +34,8 @@ customers.get("/", (c) => {
   const scope = c.req.query("scope") ?? "branch";
   const rawBranch = c.req.query("branch");
   const workingBranchId = rawBranch ? Number(rawBranch) : null;
-  const limit = Math.min(Number(c.req.query("limit") ?? 25) || 25, 100);
+  const requested = Number(c.req.query("limit") ?? 25) || 25;
+  const limit = Math.min(requested, MAX_LIMIT);
 
   if (!SCOPES.has(scope)) {
     return c.json({ error: `scope must be one of ${[...SCOPES].join(", ")}` }, 400);
@@ -40,5 +46,19 @@ customers.get("/", (c) => {
   }
 
   const result = searchCustomers({ term, workingBranchId, scope, limit });
-  return c.json(envelope(result, { route: result.route, scope, term }));
+  return c.json(
+    envelope(result, {
+      route: result.route,
+      scope,
+      term,
+      // How many matched, against how many came back. Without both, a truncated page looks
+      // like the whole answer.
+      matchCount: result.matchCount ?? result.total,
+      matchCountApproximate: Boolean(result.matchCountApproximate),
+      limit,
+      limitRequested: requested,
+      limitCapped: requested > MAX_LIMIT,
+      truncated: (result.matchCount ?? result.total) > result.total,
+    }),
+  );
 });

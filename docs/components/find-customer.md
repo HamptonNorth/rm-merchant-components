@@ -105,7 +105,7 @@ workingBranch.addEventListener("merchant-working-branch-changed", (e) => {
 | `scope` | `scope` | `branch` \| `neighbours` \| `all` | `branch` | Search scope. The widen control steps through these. |
 | `heading` | `heading` | string | `"Find customer"` | Blank hides it. |
 | `placeholder` | `placeholder` | string | … | Input placeholder. |
-| `limit` | `limit` | number | `25` | Maximum rows. |
+| `limit` | `limit` | number | `25` | Rows to return. The API caps at 500 and says when it did. |
 
 ## Events
 
@@ -132,6 +132,29 @@ request cannot overwrite a faster later one.
 `ON STOP` (613 customers) is the one that prevents a mistake: releasing goods to a stopped
 account. `Cash` / `Credit`, `Counter` for a branch's own cash-sale account, and `National`
 for accounts in scope everywhere.
+
+## Result counts and the limit
+
+The response reports how many matched, not only how many came back:
+
+| Field | Meaning |
+|---|---|
+| `total` | rows actually returned |
+| `matchCount` | rows that matched in total |
+| `truncated` | `matchCount > total` |
+| `limit` / `limitRequested` / `limitCapped` | the limit applied, what was asked for, and whether the ceiling bit |
+
+When the page is truncated the component says so — *"25 of 2,169 matches — narrow the
+search to see the rest"* — rather than reporting 25 as though it were the answer. Counting
+costs ~0.9 ms over 2,169 matches, less than fetching the page itself.
+
+`matchCountApproximate` is set only on the mixed postcode+name route, where the two searches
+are counted separately and a customer matching both is counted twice. It is an upper bound
+there, flagged rather than hidden.
+
+**The ceiling is 500.** It exists so one search cannot ask for 39,000 rows, and asking for
+more returns 500 with `limitCapped: true` — a silent clamp is indistinguishable from a bug,
+which is how the original 100 was found.
 
 ## Data
 
