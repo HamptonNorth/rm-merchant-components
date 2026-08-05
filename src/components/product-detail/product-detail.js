@@ -135,10 +135,10 @@ export class MerchantProductDetail extends MerchantElement {
 
   // --- pieces ---------------------------------------------------------------
 
-  renderSection(title, body, { wide = false } = {}) {
+  renderSection(title, body) {
     if (!body) return nothing;
     return html`
-      <section class=${wide ? "@lg:col-span-2" : ""}>
+      <section>
         <h3 class="mb-1 text-xs font-semibold tracking-wide text-slate-500 uppercase dark:text-slate-400">
           ${title}
         </h3>
@@ -413,14 +413,35 @@ export class MerchantProductDetail extends MerchantElement {
 
         ${this.renderAvailability()}
 
-        <div class="mt-3 grid gap-4 @lg:grid-cols-2">
-          ${this.renderSection("Price", this.renderPrices(), { wide: true })}
-          ${this.renderSection("Dimensions", this.renderDimensions())}
-          ${this.renderSection("Packaging", this.renderPackaging())}
-          ${this.renderSection("Barcodes", this.renderBarcodes())}
-          ${this.renderSection("Supply", this.renderSupply())}
-          ${this.renderSection("Specification", this.renderSpecification())}
-          ${this.renderCost()}
+        <!--
+          Price beside the facts once there is room for it, stacked when there is not.
+
+          The price tables are narrow by nature — two or three columns of figures — so giving
+          them the full width of a wide card left "Band 1 ........ £22.50" stretched across
+          900px of nothing while dimensions and supply queued up underneath. A capped column
+          keeps the figures together and puts the reference facts alongside instead.
+
+          All three breakpoints measure the same container (:host is the only element with
+          container-type), so they are widths of the CARD, not of the window. No property:
+          the component can see how much room it has been given.
+        -->
+        <div class="mt-3 grid items-start gap-4 @3xl:grid-cols-[minmax(0,24rem)_1fr] @3xl:gap-6">
+          ${this.renderSection("Price", this.renderPrices())}
+          <!--
+            The facts stay a single stack at every width. They are label/value pairs whose
+            values are of unpredictable length — "Howarth Timber, London", "Kiln Dried
+            Softwood Carcassing" — and splitting them into ~290px columns makes those wrap
+            after the first word. The horizontal saving has already been taken by moving the
+            price out beside them; a third column only adds busyness.
+          -->
+          <div class="grid gap-4">
+            ${this.renderSection("Dimensions", this.renderDimensions())}
+            ${this.renderSection("Packaging", this.renderPackaging())}
+            ${this.renderSection("Barcodes", this.renderBarcodes())}
+            ${this.renderSection("Supply", this.renderSupply())}
+            ${this.renderSection("Specification", this.renderSpecification())}
+            ${this.renderCost()}
+          </div>
         </div>
         ${p.updated_at
           ? html`<p class="mt-3 text-xs text-slate-400 dark:text-slate-500">
