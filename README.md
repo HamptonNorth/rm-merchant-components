@@ -89,9 +89,9 @@ To open the components on a phone, tablet or the counter PC rather than only on 
 that built them:
 
 ```bash
-bun run deploy                 # source + dataset, then restart
-bun run deploy -- --no-db      # source only, much faster
-bun run deploy -- --db-only    # just the dataset, after a regeneration
+bun run deploy              # source + dataset, then restart
+bun run deploy --no-db      # source only, much faster
+bun run deploy --db-only    # just the dataset, after a regeneration
 ```
 
 Target defaults to `rcollins@nuc2023:/opt/rm-merchant-components` on port 8788; override with

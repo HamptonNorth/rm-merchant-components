@@ -4,8 +4,8 @@
 # on a phone, a tablet, or the counter PC rather than only on the machine that built them.
 #
 #   bun run deploy              source + dataset if it changed, then restart
-#   bun run deploy -- --no-db   skip the 137 MB dataset (source-only, much faster)
-#   bun run deploy -- --db-only push just the dataset after a regeneration
+#   bun run deploy --no-db      skip the 137 MB dataset (source-only, much faster)
+#   bun run deploy --db-only    push just the dataset after a regeneration
 #
 # Run FROM the dev machine. This differs from aph2-diary's update-diary.sh, which runs on
 # the target and pulls from git — and it differs for one reason: **the dataset is not in
@@ -60,7 +60,11 @@ LOCAL_DB="$(bun -e 'const m = await import("./server/db.js"); console.log(m.dbPa
 if [[ $WITH_DB == 1 && ! -f "$LOCAL_DB" ]]; then
   echo "!!! no dataset at ${LOCAL_DB} — generate it, or deploy with --no-db"; exit 1
 fi
-step "Dataset  ${LOCAL_DB}  ($(du -h "$LOCAL_DB" | cut -f1))"
+if [[ $WITH_DB == 1 ]]; then
+  step "Dataset  ${LOCAL_DB}  ($(du -h "$LOCAL_DB" | cut -f1))"
+else
+  step "Dataset  skipped (--no-db)"
+fi
 
 step "Reachable: ${TARGET}"
 ssh -o ConnectTimeout=8 -o BatchMode=yes "$TARGET" true 2>/dev/null \

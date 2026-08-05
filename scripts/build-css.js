@@ -24,9 +24,21 @@ function hostify(css) {
   return css.replace(/(^|[},]\s*):root(?!\s*,\s*:host)\b/g, "$1:root, :host");
 }
 
+// The binary @tailwindcss/cli installs, invoked directly rather than through `bunx`.
+//
+// `bunx` is a separate executable that sits beside `bun`, and it is not guaranteed to be on
+// PATH — deploying to a box with bun at /usr/local/bin/bun and no bunx beside it failed here
+// with "Executable not found in $PATH". Running the local binary is better regardless: no
+// PATH dependency, no chance of a network fetch, and it is the version the lockfile pinned
+// rather than whatever bunx happens to resolve.
+const TAILWIND = "node_modules/.bin/tailwindcss";
+
 async function build() {
   const started = performance.now();
-  const proc = Bun.spawn(["bunx", "@tailwindcss/cli", "-i", ENTRY, "-o", CSS_OUT], {
+  if (!existsSync(TAILWIND)) {
+    throw new Error(`${TAILWIND} is missing — run \`bun install\` first.`);
+  }
+  const proc = Bun.spawn([TAILWIND, "-i", ENTRY, "-o", CSS_OUT], {
     stdout: "pipe",
     stderr: "pipe",
   });
