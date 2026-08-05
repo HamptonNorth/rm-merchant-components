@@ -465,6 +465,34 @@ Use `per` or `uom_type` instead.
 
 ---
 
+## 2f. Line qualifiers and specials
+
+**→ Full spec: [`requirements-order-lines.md`](requirements-order-lines.md)**
+
+**Status:** not blocking — the order-line component can be built to these rules today. Wanted
+so the two mechanisms can be demonstrated rather than described.
+
+Two line-level mechanisms the catalogue cannot currently show:
+
+- **Qualifying text on a line.** `2.5L Mixed Dulux Emulsion` sold with `colour 475` against
+  it. The colour is not a product attribute and not a variant — it is text on the line, and
+  paint must not be modelled as a configurator. `allow_description_change` is the existing
+  flag and is set on **198 products, all timber**; realistic generation would set it wherever
+  a qualifier is normal. **No paint exists at all** — Decorating is `Brushes_and_rollers`,
+  61 products — so the most obvious case cannot be shown.
+- **Specials created on the fly.** A `ZZ-` prefixed product cloned from a donor when a
+  customer wants grey guttering and only black is ranged: analysis codes inherited,
+  description edited, selling price typed in, usually bought back-to-back. Already on
+  `must-cater-for.md`. Nothing marks a product as a special or names its donor —
+  `created_from_product_id` plus a flag would make it visible.
+
+Also recorded there, for anyone who reaches for fixed variants: 229 products carry a
+structured `colour` in `specification`, but only **two families** exist in more than one
+colour and both are bricks. "What colours does that come in" is unanswerable from this
+dataset.
+
+---
+
 ## 3. Stock, sourcing and inter-branch supply
 
 **→ Full spec: [`requirements-stock-sourcing.md`](requirements-stock-sourcing.md)**
