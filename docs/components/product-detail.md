@@ -91,8 +91,10 @@ Worth recording, because all three rendered plausibly and were only caught by lo
    as links, under its own heading. Unheaded it ran on from **Supply**, where the two
    different meanings of "Source" (`purchased` vs a URL) sat one above the other.
 3. **The mass unit is not recorded.** `weight_uom_id` names the *basis* — "per each", "per
-   pack" — not kilograms. The card prints `2.38 per each`, which is truthful; inventing "kg"
-   would not be.
+   pack" — not kilograms, and no product points it at the `kg` or `tonne` rows that exist in
+   `unit_of_measure`. The card prints `2.38 per each`, which is truthful; inventing "kg"
+   would not be, even though the data settles it (770 per m³ on American White Oak is
+   timber density). Raised as [`upstream-requests.md`](../upstream-requests.md) §2e.
 
 ## Not yet
 

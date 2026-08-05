@@ -391,9 +391,9 @@ a materialised path (`Top.Timber.Joinery.Sawn`), so subtree faceting needs nothi
 
 ---
 
-## 2e. A `view_cost` permission, and what `tier` actually means
+## 2e. Product-table semantics: `view_cost`, `tier`, and the missing weight unit
 
-**Status:** neither blocking. Both found while building `product-detail`.
+**Status:** none blocking. All found while building `product-detail`.
 
 **No permission covers seeing cost or margin.** The 15 permissions cover sales, credit,
 purchasing, stock and works orders. `product-detail` therefore puts cost behind a `showCost`
@@ -417,9 +417,51 @@ have 6 prices against a 4-tier scheme), and **no customer carries a price band**
 connects a customer to the tier they should be charged at — which is the obvious next step
 for a counter system.
 
-Also worth knowing for any consumer: **`unit_of_measure.description` is internal
-configuration guidance**, not a display label. It reads "Use for unit products. Qty x price
-with divisor of 1", and rendering it produces "Weight: 2.38 Use for unit products…".
+### `product.weight` has no unit of mass
+
+**`weight_uom_id` names the denominator, not the unit.** It answers "weight of *what*" and
+never "weight *in* what:
+
+| `weight_uom_id` → | products | means |
+|---|---:|---|
+| `each` | 2,914 | weight per unit |
+| `pack` | 545 | weight per pack |
+| `m2` | 120 | weight per m² |
+| `mtr` | 75 | weight per metre |
+| `m3` | 27 | weight per m³ |
+| `pallet` / `bag` | 33 | weight per pallet / bag |
+
+The awkward part: **`unit_of_measure` already holds the mass units** — id 4 (`per = kg`, "Use
+for metric weighed products") and id 16 (`per = tonne`, "bulk aggregates sand ballast and MOT
+type 1") — and **zero products point `weight_uom_id` at either**. The vocabulary exists; the
+column is not being used for it.
+
+The values are kg, and the data settles it three ways:
+
+- `770 per m3` on *Oak, American White Kiln-Dried*. Oak is ~770 kg/m³, and the whole m³ range
+  is 450–770 — exactly softwood-to-hardwood density.
+- `25 per bag` on *Gyproc Thistle BoardFinish **25kg***. The unit is in the product name.
+- `67 per each` on a 2440x1220x30mm MDF board.
+
+**Why it is worth fixing rather than assuming.** Total order weight is what plans a lorry,
+and the delivered-sale workflows all need it. With `tonne` sitting in the same lookup as a
+plausible-looking option, a bulk aggregate entered as `1.6` rather than `1600` is a 1000x
+error that nothing in the schema would catch.
+
+Either split the two ideas — `weight_uom_id` for the mass unit, `weight_per_uom_id` for the
+basis — or declare weight always-kg and rename the existing column to `weight_per_uom_id` so
+it stops appearing to answer a question it does not. The rename alone removes the ambiguity;
+the split is only needed if tonne is ever to be used.
+
+Until then `product-detail` prints **`2.38 per each`** rather than `2.38 kg per each`. The
+inference is strong, but printing a unit the data does not carry is how a 1.6-versus-1600
+mistake gets made confidently.
+
+### `unit_of_measure.description` is not a label
+
+Internal configuration guidance, not display text. It reads "Use for unit products. Qty x
+price with divisor of 1", and rendering it produces "Weight: 2.38 Use for unit products…".
+Use `per` or `uom_type` instead.
 
 ---
 
