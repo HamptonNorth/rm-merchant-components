@@ -24,6 +24,10 @@ export class MerchantProductDetail extends MerchantElement {
     ...MerchantElement.styles,
     css`
       :host {
+        /* The host sizes the component; the component adapts to whatever it is given. That
+           is why the layout below uses @lg: (container) rather than lg: (viewport) — a
+           viewport query would put this card in two columns inside a narrow sidebar on a
+           wide screen, which is exactly what it did before. */
         container-type: inline-size;
         display: block;
       }
@@ -134,7 +138,7 @@ export class MerchantProductDetail extends MerchantElement {
   renderSection(title, body, { wide = false } = {}) {
     if (!body) return nothing;
     return html`
-      <section class=${wide ? "sm:col-span-2" : ""}>
+      <section class=${wide ? "@lg:col-span-2" : ""}>
         <h3 class="mb-1 text-xs font-semibold tracking-wide text-slate-500 uppercase dark:text-slate-400">
           ${title}
         </h3>
@@ -409,7 +413,7 @@ export class MerchantProductDetail extends MerchantElement {
 
         ${this.renderAvailability()}
 
-        <div class="mt-3 grid gap-4 sm:grid-cols-2">
+        <div class="mt-3 grid gap-4 @lg:grid-cols-2">
           ${this.renderSection("Price", this.renderPrices(), { wide: true })}
           ${this.renderSection("Dimensions", this.renderDimensions())}
           ${this.renderSection("Packaging", this.renderPackaging())}
