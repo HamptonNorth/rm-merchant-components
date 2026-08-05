@@ -43,7 +43,51 @@ fabricated one.
 10m². A `tier × uom` grid would have holes in it and imply prices that do not exist, so each
 unit gets its own block.
 
+**The unit sits in the Price column header** — `Price each`, `Price per 10m²` — rather than
+in a caption bar above the table. "Priced each" as its own row said little that "Price each"
+does not, and the `uom_type` shown beside it ("sheet material") said nothing at all: it is a
+schema enum, not a fact about the product. One header row per block instead of two, with the
+unit still travelling with the figures it qualifies.
+
 Clicking a band emits `merchant-product-price-selected`.
+
+## VAT-inclusive prices
+
+`vatInclusive` shows selling prices with VAT added — what a retail caller asking *"what will
+it cost me?"* wants. Off by default, because the trade counter works ex-VAT and that is the
+figure on the order.
+
+|  | Bands |
+|---|---|
+| default | £22.50 · £20.25 · £19.13 · £18.45 — *"Prices exclude VAT (STD 20%)"* |
+| `vatInclusive` | £27.00 · £24.30 · **£22.96** · £22.14 — *"Prices include VAT at 20%"* |
+
+An **`Includes VAT`** badge sits beside the **Selling prices** heading, in the same amber as
+`Other branches` — above the figures rather than under them, because a footnote is read after
+the price has been quoted and £27.00 misheard as ex-VAT is a 20% error out of the door. Only
+the inclusive case is badged; ex-VAT is what the counter expects, and badging the expected
+state teaches people to ignore the badge.
+
+**The emitted price never changes meaning.** `pricePence` is always the ex-VAT figure —
+that is what an order line carries, and letting a display toggle redefine it would surface
+as a 20% error in someone else's total. The event gains `pricePenceIncVat`, `vatRate` and
+`shownIncVat` alongside it.
+
+**Rounded to the nearest penny**, which makes an inclusive unit price indicative rather than
+exact: £19.13 × 1.2 is 2295.6p and shows as **£22.96**. Real VAT is computed once on the
+invoice total, not per line, so three of those inclusive will not tally exactly with VAT on
+three ex-VAT. Fine for a counter enquiry, and the reason the ex-VAT figure stays
+authoritative.
+
+**Zero-rated and exempt are handled rather than dressed up.** Both arrive as rate 0, so the
+inclusive figure equals the exclusive one; the note then reads *"No VAT on this line
+(ZERO)"* rather than *"includes VAT at 0%"*, which would read as a bug. No product currently
+carries either — all 3,714 are STD 20% — but the rates exist in `tax_rate`.
+
+**Cost is unaffected.** Input tax is reclaimed, so cost is ex-VAT by nature.
+
+The maths lives in [`shared/format.js`](../../src/components/shared/format.js) as `withVat`,
+so find-product can adopt the same toggle without a second implementation.
 
 ## Cost is off by default
 
@@ -62,6 +106,7 @@ Recorded as an upstream gap rather than invented locally.
 | `productId` | number | — | Required |
 | `workingBranchId` | number | — | A branch **id**, not a code. Decides the availability verdict and which other branches are listed |
 | `showCost` | boolean | `false` | Cost and margin. See above |
+| `vatInclusive` | boolean | `false` | Selling prices with VAT added, for a retail enquiry. The emitted price stays ex-VAT |
 | `selectedTier` | number | `0` | Highlight a band, as if a tier were already chosen |
 | `heading` / `dense` | | | Presentation |
 
@@ -69,7 +114,7 @@ Recorded as an upstream gap rather than invented locally.
 
 | Event | Detail |
 |---|---|
-| `merchant-product-price-selected` | `{ productId, productCode, tier, uomId, per, divisor, pricePence, qtyFrom, qtyTo }` |
+| `merchant-product-price-selected` | `{ productId, productCode, tier, uomId, per, divisor, pricePence, pricePenceIncVat, vatRate, shownIncVat, qtyFrom, qtyTo }` |
 | `merchant-product-detail-loaded` | `{ productId, availability, branchId }` |
 
 ## In the counter-sale flow

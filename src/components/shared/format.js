@@ -16,6 +16,22 @@ export function fmtPence(pence, { whole = false } = {}) {
   return whole ? GBP_WHOLE.format(pounds) : GBP.format(pounds);
 }
 
+// Selling prices are stored and transacted ex-VAT — that is the authoritative figure, and
+// what an order line carries. A VAT-inclusive figure is derived for display when a customer
+// is asking "what will it cost me", which is a retail question rather than a trade one.
+//
+// Rounded to the nearest penny. That makes a displayed inclusive unit price indicative
+// rather than exact: real VAT is computed once on the invoice total, not per line, so
+// 3 x £19.13 inc-VAT will not always equal the VAT on 3 x £19.13 ex-VAT. Fine for a counter
+// enquiry, which is what this is for, and the reason the ex-VAT figure stays authoritative.
+export function withVat(pence, ratePct) {
+  if (pence === null || pence === undefined) return pence;
+  const rate = Number(ratePct) || 0;
+  // Zero-rated and exempt both arrive as 0 and must not be dressed up as "includes VAT".
+  if (rate <= 0) return pence;
+  return Math.round(pence * (1 + rate / 100));
+}
+
 const DATE = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
 export function fmtDate(iso) {

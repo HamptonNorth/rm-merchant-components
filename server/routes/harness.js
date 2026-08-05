@@ -340,6 +340,17 @@ const SCENARIOS = [
     props: (row) => ({ productId: row.id, workingBranchId: row.branch_id, showCost: false }),
   },
   {
+    id: "detail-vat-inclusive",
+    component: "product-detail",
+    label: "Retail enquiry — prices with VAT",
+    // "What will it cost me?" is a retail question. The trade counter works ex-VAT, so this
+    // is off by default; the emitted price stays ex-VAT either way.
+    resolve: () => db.query(`select id from product where tax_id =
+                              (select id from tax_rate where rate > 0 limit 1)
+                              order by id limit 1`).get(),
+    props: (row) => ({ productId: row.id, vatInclusive: true, showCost: false }),
+  },
+  {
     id: "detail-with-cost",
     component: "product-detail",
     label: "With cost and margin shown",

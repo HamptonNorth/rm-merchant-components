@@ -8,36 +8,38 @@
 // Colour carries the meaning: green is "yes, now", blue "yes, ordered in", amber "yes, but not
 // from this yard", grey "yes, from the supplier", red "no".
 
+import { BADGE } from "./badges.js";
+
 export const AVAILABILITY = {
   held: {
     label: "In range",
     hint: "Carried at this branch",
     detail: "Carried at this branch and sellable now.",
-    classes: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
+    classes: BADGE.good,
   },
   to_order: {
     label: "To order",
     hint: "Sold here, obtained per order",
     detail: "Sold from this branch but never held — obtained per order.",
-    classes: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200",
+    classes: BADGE.info,
   },
   elsewhere: {
     label: "Other branches",
     hint: "Not ranged here, carried elsewhere in the network",
     detail: "Not ranged at this branch, but carried elsewhere in the network.",
-    classes: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200",
+    classes: BADGE.caution,
   },
   special_order: {
     label: "Special order",
     hint: "Ranged nowhere — orderable from the supplier",
     detail: "Ranged at no branch — orderable from the supplier as a special.",
-    classes: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+    classes: BADGE.neutral,
   },
   blocked: {
     label: "Not permitted",
     hint: "This branch may not sell this line",
     detail: "This branch may not sell this line.",
-    classes: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200",
+    classes: BADGE.stop,
   },
 };
 

@@ -22,6 +22,7 @@ import { html, css, nothing } from "lit";
 import { MerchantElement } from "../shared/merchant-element.js";
 import { fmtPence } from "../shared/format.js";
 import { AVAILABILITY, perLabel } from "../shared/availability.js";
+import { BADGE_BASE } from "../shared/badges.js";
 
 const SCOPES = ["branch", "all"];
 
@@ -374,7 +375,7 @@ export class MerchantFindProduct extends MerchantElement {
         ? `At ${row.ranged_branches} ${row.ranged_branches === 1 ? "branch" : "branches"}`
         : a.label;
     return html`<span
-      class="rounded px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${a.classes}"
+      class="${BADGE_BASE} ${a.classes}"
       title=${a.hint}
       >${label}</span
     >`;

@@ -113,3 +113,37 @@ test("tax, supplier and group come back joined", () => {
   expect(d.product.group_path).toContain("Top");
   expect(d.product.supplier_name).toBeTruthy();
 });
+
+// --- VAT-inclusive display ---------------------------------------------------
+
+import { withVat } from "../src/components/shared/format.js";
+
+test("withVat rounds to the nearest penny and leaves zero-rated alone", () => {
+  expect(withVat(2250, 20)).toBe(2700);
+  // 1913 * 1.2 = 2295.6 — a real band price, and the reason this cannot be integer maths.
+  expect(withVat(1913, 20)).toBe(2296);
+  // EXEMPT and ZERO both arrive as 0 and must add nothing rather than being dressed up.
+  expect(withVat(1913, 0)).toBe(1913);
+  expect(withVat(1913, null)).toBe(1913);
+  expect(withVat(null, 20)).toBeNull();
+  expect(withVat(undefined, 20)).toBeUndefined();
+});
+
+test("the stored price is always ex-VAT, so inclusive is strictly larger at a positive rate", () => {
+  const d = getProductDetail(twoUnits.id, BRANCH);
+  const rate = Number(d.product.tax_rate) || 0;
+  expect(rate).toBeGreaterThan(0);
+  for (const uom of d.uoms) {
+    for (const band of uom.bands) {
+      expect(withVat(band.pricePence, rate)).toBeGreaterThan(band.pricePence);
+    }
+  }
+});
+
+test("every product carries a tax rate the component can use", () => {
+  // The card reads tax_rate off the product row. A null there would silently render inclusive
+  // prices identical to exclusive ones, which looks like the toggle is broken.
+  const missing = db.query(`select count(*) c from product p
+    left join tax_rate t on t.id = p.tax_id where t.id is null`).get().c;
+  expect(missing).toBe(0);
+});

@@ -14,8 +14,9 @@
 
 import { html, css, nothing } from "lit";
 import { MerchantElement } from "../shared/merchant-element.js";
-import { fmtPence, fmtDate } from "../shared/format.js";
+import { fmtPence, fmtDate, withVat } from "../shared/format.js";
 import { availabilityMeta, perLabel } from "../shared/availability.js";
+import { BADGE, BADGE_BASE } from "../shared/badges.js";
 
 export class MerchantProductDetail extends MerchantElement {
   static version = "0.1.0";
@@ -39,6 +40,7 @@ export class MerchantProductDetail extends MerchantElement {
     workingBranchId: { type: Number, attribute: "working-branch-id" },
     heading: { type: String },
     showCost: { type: Boolean, attribute: "show-cost" },
+    vatInclusive: { type: Boolean, attribute: "vat-inclusive" },
     dense: { type: Boolean },
     selectedTier: { type: Number, attribute: "selected-tier" },
     detail: { attribute: false, state: true },
@@ -67,6 +69,13 @@ export class MerchantProductDetail extends MerchantElement {
       description:
         "Show cost and margin. Off by default: counter staff generally may not see cost. There is no view_cost permission in the dataset yet, so this is a prop rather than a permission check — see docs/components/product-detail.md.",
     },
+    {
+      name: "vatInclusive",
+      type: "boolean",
+      default: false,
+      description:
+        "Show selling prices with VAT added — what a retail caller is asking for. Off for the trade counter, where ex-VAT is the working figure. Cost is unaffected: input tax is reclaimed, so cost is ex-VAT by nature. The emitted price stays ex-VAT whichever way this is set.",
+    },
     { name: "dense", type: "boolean", default: false, description: "Tighter spacing." },
     {
       name: "selectedTier",
@@ -84,6 +93,7 @@ export class MerchantProductDetail extends MerchantElement {
     this.workingBranchId = null;
     this.heading = "";
     this.showCost = false;
+    this.vatInclusive = false;
     this.dense = false;
     this.selectedTier = 0;
     this.detail = null;
@@ -118,6 +128,20 @@ export class MerchantProductDetail extends MerchantElement {
     }
   }
 
+  // The rate is per product (tax_rate joined on the row), not a constant — EXEMPT and ZERO
+  // both exist and both mean "add nothing".
+  get vatRate() {
+    return Number(this.detail?.product?.tax_rate) || 0;
+  }
+
+  get showingVat() {
+    return this.vatInclusive && this.vatRate > 0;
+  }
+
+  displayPence(pence) {
+    return this.vatInclusive ? withVat(pence, this.vatRate) : pence;
+  }
+
   pickPrice(uom, band) {
     this.selectedTier = band.tier;
     this.emit("merchant-product-price-selected", {
@@ -127,7 +151,13 @@ export class MerchantProductDetail extends MerchantElement {
       uomId: uom.uomId,
       per: uom.per,
       divisor: uom.divisor,
+      // Always the ex-VAT figure, whatever is on screen. This is what an order line carries,
+      // and letting a display toggle change what `pricePence` means would be a trap that only
+      // shows up as a 20% error in someone else's total.
       pricePence: band.pricePence,
+      pricePenceIncVat: withVat(band.pricePence, this.vatRate),
+      vatRate: this.vatRate,
+      shownIncVat: this.showingVat,
       qtyFrom: band.qtyFrom,
       qtyTo: band.qtyTo,
     });
@@ -135,16 +165,35 @@ export class MerchantProductDetail extends MerchantElement {
 
   // --- pieces ---------------------------------------------------------------
 
-  renderSection(title, body) {
+  renderSection(title, body, badge = nothing) {
     if (!body) return nothing;
     return html`
       <section>
-        <h3 class="mb-1 text-xs font-semibold tracking-wide text-slate-500 uppercase dark:text-slate-400">
-          ${title}
+        <h3
+          class="mb-1 flex flex-wrap items-center gap-2 text-xs font-semibold tracking-wide text-slate-500 uppercase dark:text-slate-400"
+        >
+          ${title}${badge}
         </h3>
         ${body}
       </section>
     `;
+  }
+
+  // Flagged where the prices are read, not underneath them. A footnote below the figures is
+  // read after the figure has already been quoted, and "£27.00" misheard as ex-VAT is a 20%
+  // error going out of the door. Same amber as "Other branches" on purpose: both mean
+  // "correct, but not the assumption you would otherwise make".
+  //
+  // Only the inclusive case is badged. Ex-VAT is what the trade counter expects, and badging
+  // the expected state is noise that teaches people to ignore the badge.
+  renderVatBadge() {
+    if (!this.showingVat) return nothing;
+    return html`<span
+      part="vat-badge"
+      class="${BADGE_BASE} ${BADGE.caution} normal-case"
+      title="Selling prices below have VAT added at ${this.vatRate}%"
+      >Includes VAT</span
+    >`;
   }
 
   // A definition list rather than a table: rows are label/value pairs, and half of them are
@@ -173,7 +222,7 @@ export class MerchantProductDetail extends MerchantElement {
         class="rounded-merchant border border-slate-200 p-3 dark:border-slate-800"
       >
         <div class="flex flex-wrap items-center gap-2">
-          <span class="rounded px-1.5 py-0.5 text-xs font-medium ${a.classes}">${a.label}</span>
+          <span class="${BADGE_BASE} ${a.classes}">${a.label}</span>
           <span class="text-sm text-slate-600 dark:text-slate-300">${a.detail}</span>
         </div>
         ${otherBranches?.length
@@ -204,28 +253,27 @@ export class MerchantProductDetail extends MerchantElement {
         ${uoms.map(
           (uom) => html`
             <div class="overflow-hidden rounded-merchant border border-slate-200 dark:border-slate-800">
-              <div
-                class="flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-xs dark:border-slate-800 dark:bg-slate-800/50"
-              >
-                <span class="font-medium text-slate-700 dark:text-slate-200">
-                  Priced ${perLabel(uom.per)}
-                  ${uom.divisor > 1
-                    ? html`<span class="text-slate-500 dark:text-slate-400">— per ${uom.divisor}</span>`
-                    : nothing}
-                </span>
-                ${uom.uomType && uom.uomType !== "unit"
-                  ? html`<span class="text-slate-500 dark:text-slate-400">${uom.uomType.replace(/_/g, " ")}</span>`
-                  : nothing}
-              </div>
+              <!--
+                The unit lives in the Price column header rather than in a caption bar above
+                it. "Priced each" as its own row said little that "Price each" does not, and
+                the uom_type beside it ("sheet material") said nothing at all — it is a schema
+                enum, not a fact about the product. One header row instead of two, and the
+                unit still travels with the figures it qualifies, which is the part that
+                matters when a line is priced two ways.
+              -->
               <table class="w-full text-sm">
                 <thead>
-                  <tr class="text-xs text-slate-500 dark:text-slate-400">
-                    <th class="px-3 py-1 text-left font-medium">
+                  <tr
+                    class="border-b border-slate-200 bg-slate-50 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-400"
+                  >
+                    <th class="px-3 py-1.5 text-left font-medium">
                       ${hasQuantityBreaks ? "Quantity" : "Band"}
                     </th>
-                    <th class="px-3 py-1 text-right font-medium">Price</th>
+                    <th class="px-3 py-1.5 text-right font-medium whitespace-nowrap">
+                      Price <span class="text-slate-700 dark:text-slate-200">${perLabel(uom.per)}</span>
+                    </th>
                     ${hasQuantityBreaks
-                      ? html`<th class="px-3 py-1 text-right font-medium">Off</th>`
+                      ? html`<th class="px-3 py-1.5 text-right font-medium">Off</th>`
                       : nothing}
                   </tr>
                 </thead>
@@ -242,7 +290,17 @@ export class MerchantProductDetail extends MerchantElement {
             : // Saying which it is matters: "no quantity breaks" and "quantity breaks we are
               // not showing you" must not look the same at a counter.
               html`Customer price bands — this line has no quantity breaks.`}
-          Prices exclude VAT${product.tax_code ? html` (${product.tax_code} ${product.tax_rate}%)` : nothing}.
+          ${this.showingVat
+            ? html`<span class="font-medium text-amber-700 dark:text-amber-300"
+                >Prices include VAT at ${product.tax_rate}%.</span
+              >`
+            : this.vatInclusive
+              ? // Asked for inclusive on a line that carries no VAT. Saying "includes VAT at
+                // 0%" reads as a bug; naming the code says the same thing truthfully.
+                html`No VAT on this line${product.tax_code ? html` (${product.tax_code})` : nothing}.`
+              : html`Prices exclude VAT${product.tax_code
+                  ? html` (${product.tax_code} ${product.tax_rate}%)`
+                  : nothing}.`}
         </p>
       </div>
     `;
@@ -269,7 +327,7 @@ export class MerchantProductDetail extends MerchantElement {
           ${withQty ? qty : `Band ${band.tier}`}
         </td>
         <td class="px-3 ${this.dense ? "py-0.5" : "py-1"} text-right font-medium tabular-nums">
-          ${fmtPence(band.pricePence)}
+          ${fmtPence(this.displayPence(band.pricePence))}
         </td>
         ${withQty
           ? html`<td class="px-3 ${this.dense ? "py-0.5" : "py-1"} text-right tabular-nums text-slate-500 dark:text-slate-400">
@@ -426,7 +484,7 @@ export class MerchantProductDetail extends MerchantElement {
           the component can see how much room it has been given.
         -->
         <div class="mt-3 grid items-start gap-4 @3xl:grid-cols-[minmax(0,24rem)_1fr] @3xl:gap-6">
-          ${this.renderSection("Price", this.renderPrices())}
+          ${this.renderSection("Selling prices", this.renderPrices(), this.renderVatBadge())}
           <!--
             The facts stay a single stack at every width. They are label/value pairs whose
             values are of unpredictable length — "Howarth Timber, London", "Kiln Dried
