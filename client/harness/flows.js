@@ -89,6 +89,46 @@ export const flows = [
         },
       },
       {
+        component: "basket",
+        note: "Onto the basket — and it can still change its mind",
+        needs: ["workingBranchId"],
+        // Takes the price-selected event as a line. The basket is the only step that keeps
+        // anything: everything above it is a lookup, and this is where they add up to a sale.
+        props: (ctx) => ({
+          workingBranchId: ctx.workingBranchId,
+          customerId: ctx.customerId,
+          customerName: ctx.customerName,
+          accountType: ctx.customerAccountType,
+          counter: ctx.workingBranchName,
+          pendingLine: ctx.priceTier
+            ? {
+                // Keyed so re-rendering the same selection does not add the line twice.
+                key: `${ctx.productCode}:${ctx.priceTier}:${ctx.pricePence}`,
+                productId: ctx.productId,
+                code: ctx.productCode,
+                name: ctx.productName,
+                qty: 1,
+                unitPricePence: ctx.pricePence,
+                priceTier: ctx.priceTier,
+                pricedOn: ctx.basketFulfilment ?? "collect",
+                per: ctx.pricePer,
+                vatRate: 20,
+                availability: ctx.productAvailability,
+              }
+            : null,
+        }),
+        emits: {
+          "merchant-basket-changed": (d) => ({
+            basketReference: d.reference,
+            basketState: d.state,
+            basketFulfilment: d.fulfilment,
+            basketLines: d.lines,
+            basketGrossPence: d.totals?.grossPence,
+            basketLapse: d.lapse ?? null,
+          }),
+        },
+      },
+      {
         component: "delivery-address",
         note: "Where is it going? (skip for a collect)",
         needs: ["customerId"],
@@ -179,6 +219,21 @@ export function flowWarnings(ctx) {
         text: `${ctx.productName ?? "This product"} ${where}. A collection customer cannot take it today.`,
       });
     }
+  }
+
+  // The basket knows whether this is going out on a lorry; the address step is only
+  // relevant once it does. Neither component can see both facts.
+  if (ctx.basketFulfilment === "deliver" && !ctx.deliveryAddressId) {
+    out.push({ level: "warn", text: "Marked for delivery with no delivery address chosen yet." });
+  }
+  if (ctx.basketLapse?.lapsed) {
+    out.push({ level: "stop", text: "This quote has lapsed — reprice before releasing goods." });
+  }
+  if (ctx.basketState === "quoted") {
+    out.push({
+      level: "info",
+      text: `Quote ${ctx.basketReference ?? ""} — nothing is reserved and no goods leave on it.`.trim(),
+    });
   }
 
   if (ctx.customerAccountType === "cash" && ctx.deliveryAddressId) {

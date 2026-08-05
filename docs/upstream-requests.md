@@ -493,6 +493,75 @@ dataset.
 
 ---
 
+## 2g. Prices differ by fulfilment basis
+
+**Status:** blocking nothing today, because the basket surfaces the problem rather than
+pretending to solve it. Wanted before a delivered price can be quoted correctly.
+
+`product_price` is `(product_id, tier, price_pence, unit_of_measure_id)`. There is **no
+fulfilment dimension anywhere in the schema** — a search across every table for
+deliver/collect/direct/haulage/carriage finds only `customer_delivery_address.delivery_instructions`
+and `product.allow_direct_ex_works`.
+
+But some commodities genuinely price differently on three bases:
+
+| Basis | |
+|---|---|
+| **Collected** | customer hauls it |
+| **Delivered** | our lorry, and the haulage is in the price |
+| **Direct** | supplier straight to site, no double handling, different margin |
+
+It matters most where haulage dominates: `Top.Heavyside.Bricks` averages **£1.02** a unit and
+`Top.Heavyside.Roofing` **£1.53**. A penny is a percentage, and 500 bricks is a lorry.
+
+Either a `fulfilment` column on `product_price` (and in the unique key), or a separate
+delivered/direct price table keyed on the same product and tier. Generation only needs it on
+the heavyside groups where it is real — a uniform uplift everywhere would be less useful than
+nothing, because it would not exercise the case where *most* lines are unaffected and two are.
+
+Until it lands, `basket_line.priced_on` records the basis a line was quoted on and the basket
+reports how many lines a flip has invalidated. That count is always 0 today.
+
+---
+
+## 2h. Selling prices, and a settings table
+
+**→ Full spec: [`selling_prices.md`](selling_prices.md)** — agreed 2026-08-05, and the larger
+upstream ask by some distance.
+
+**Status:** blocking a pricing component. Nothing in the schema can express a resolved price.
+
+The bones exist and are populated: `product.selling_group_id` → 19 groups (7 in use), and
+`customer.industry_type_id` → 30 types (39,424 of 39,452 customers linked). Both axes of the
+matrix are there. What is missing is everything that hangs off them:
+
+- **the selling price matrix** — customer pointer x product selling group -> starting band,
+  optionally with a discount, optionally scoped. Scope is one coded column: `1-999` a branch,
+  `9001-9008` a region (`9000 + region_id`), `9999` national, resolved most-specific-first.
+  That follows the existing house convention — `industry_type.industry_code` already uses
+  `999 = Other` and `price_break_tier.qty_to` uses `99999999` — and unlike a nullable branch
+  id it leaves room for the regional level
+- **two matrix pointers on `customer`** — an optional specialism and a required fallback.
+  `customer` currently has no price, band, group, tier or discount column of any kind
+- **customer special prices**, and special prices scoped to a project or delivery address
+- **contract prices** with from/to dates and delivered/collected variants
+- **special offers and BOGOF**
+- **branch price overrides** — sparse, naming the branches they apply to
+- **a settings table** for `quotes_lapse_in_days` (14) and `call_off_in_days`. `tax_rate` is
+  the nearest precedent: a system-wide value with an `effective_from`
+
+**Generation needs products in the selling groups that carry the worked examples.** The seven
+groups in use are timber and sheet material; `Lightside plumbing` (the bathroom installer's
+sanitary ware), `Paint (Dulux/Crown)` and `Sheet material (faced/decorative Kronospan)` are
+all defined with **zero products**. The matrix could be built but not demonstrated on any of
+the cases that motivate it.
+
+Two smaller notes: `price_break.selling_group_id` is defined and `0` on all three rows, so the
+selling-group price ladder is designed and unused; and `price_break_tier` already carries
+`price_band` beside `discount_pct`, which is the right shape for the matrix to follow.
+
+---
+
 ## 3. Stock, sourcing and inter-branch supply
 
 **→ Full spec: [`requirements-stock-sourcing.md`](requirements-stock-sourcing.md)**

@@ -67,7 +67,81 @@ A qualifier never creates a product row. A special always does.
 
 ---
 
-## 3. What this forces on the order-line component
+## 3. A basket is a working document, not an order being created
+
+It changes kind as well as content, and the counter does not know the outcome when it starts:
+
+> starts as a **collected counter sale** → morphs into **delivered** → three lines are
+> deleted → ends up as a **quote**, because the customer did not have enough money.
+
+So neither the fulfilment (collect / deliver) nor the document type (order / quote) is a
+choice made at creation. Both are properties of the basket that change while it is open, and
+the component must let them change rather than asking up front and locking it in. Lines are
+freely deletable throughout.
+
+### Fulfilment is a pricing dimension, not a logistics flag
+
+Some commodities **price differently collected, delivered and direct**, so flipping the
+basket reprices it. That is not a rounding detail: the profile where it bites is heavyside
+commodities, where haulage is most of the cost.
+
+| Group | Products | Avg tier-1 price |
+|---|---:|---:|
+| `Top.Heavyside.Bricks` | 120 | **£1.02** |
+| `Top.Heavyside.Roofing` | 60 | **£1.53** |
+| `Top.Heavyside.Paving_and_walls` | 120 | £73.03 |
+| `Top.Heavyside.Plaster_boards` | 54 | £353.53 |
+
+A penny either way on a brick is a percentage; delivering 500 of them is a lorry. **Direct**
+is a third basis, not a variant of delivery — supplier straight to site, no double handling,
+and a different margin structure again. `product.allow_direct_ex_works` is set on 437
+products and is the nearest thing the schema has to it today.
+
+**A price is only meaningful alongside the basis it was quoted on.** So a line records
+`priced_on`, and a flip does not silently reprice: it marks the lines that were quoted on the
+old basis. Someone told the customer a number, and a component should not quietly change it.
+
+### The default depends on who is serving
+
+| | Starts as | Because |
+|---|---|---|
+| **Trade counter** | `collect` | The customer is standing there. A builder with a working pickup thinks nothing of slinging a dozen bags of cement in the back. |
+| **Back-office sales** | **not yet asked** | *"Will that be delivered, or are you taking it now?"* comes straight after picking the customer — and a retail caller almost certainly wants it delivered. |
+
+So "not yet asked" is a real state, distinguishable from `collect`. Counter staff read it
+instinctively from the customer in front of them; a sales desk on the phone cannot, and has
+to ask before it can price anything.
+
+### Parked orders
+
+A merchant runs **several counters**, split by product knowledge. That split is already the
+top of the product hierarchy:
+
+| Counter | Group | Products |
+|---|---|---:|
+| Lightside — plumbing, fittings, bathroom | `Top.Lightside` | 1,928 |
+| Heavyside — bricks, cement, drainage | `Top.Heavyside` | 720 |
+| Timber | `Top.Timber` | 593 |
+| Tools | `Top.Tools` | — |
+
+**One basket moves between them.** A customer buys a hammer at Tools, walks to Timber for
+plywood, then back to Lightside for screws — one order, three counters, three members of
+staff. Between each, the basket is **parked**: set down under a reference, picked up
+elsewhere.
+
+**This settles an open architectural question.** Baskets cannot live on the counter PC. A
+parked basket must be retrievable from a *different* counter, so the write store is
+**per-branch**, not per-user — whatever is decided about read replicas. It also cannot live
+in the readonly dataset: it is the first thing this system writes, and it belongs in its own
+local database beside it.
+
+---
+
+## 4. What this forces on the order-line component
+
+**The basket outlives any one counter, staff member or intention.** It carries its own
+reference, its state (active / parked / quoted / confirmed), its fulfilment, and who last
+touched it — not just a list of lines.
 
 **Lines must be self-describing.** A line cannot be `(product_id, qty, price)`. It carries:
 
@@ -91,7 +165,7 @@ the way the invoice number does. The order and its special should travel togethe
 
 ---
 
-## 4. Upstream, for datagenerator2
+## 5. Upstream, for datagenerator2
 
 Not blocking the component, which can be built against these rules today.
 

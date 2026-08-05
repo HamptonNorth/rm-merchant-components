@@ -10,6 +10,7 @@ node_modules/
 *.db-wal
 *.db-shm
 data/
+baskets.db*
 
 # Build output — `bun run build` regenerates all of it
 # CSS from src/styles/tailwind.entry.css; the Lit bundle from the installed package.

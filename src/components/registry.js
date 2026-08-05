@@ -113,6 +113,20 @@ export const components = [
     events: ["merchant-qty-changed"],
   },
   {
+    id: "basket",
+    tag: "merchant-basket",
+    title: "Basket",
+    version: "0.1.0",
+    status: "ready",
+    phase: 2,
+    group: "Order",
+    description:
+      "The working document a counter sale actually is \u2014 not an order being created. Starts as a collected sale, morphs to delivered, loses lines, and can end as a quote. Parkable under a short spoken reference so another counter can pick it up, because one basket crosses Tools, Timber and Lightside on the way round. Lines carry their qualifier text and the price they were sold at.",
+    dataDeps: ["baskets.db (written)", "product", "customer"],
+    module: "/src/components/basket/basket.js",
+    events: ["merchant-basket-changed", "merchant-basket-line-added", "merchant-basket-parked"],
+  },
+  {
     id: "product-detail",
     tag: "merchant-product-detail",
     title: "Show product details",
