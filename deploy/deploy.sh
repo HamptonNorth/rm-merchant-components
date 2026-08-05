@@ -72,20 +72,32 @@ say "Preparing ${TARGET}:${APP}"
 # One ssh, one sudo prompt. -t because sudo may want a password on a TTY.
 ssh -t "$TARGET" "
   set -euo pipefail
-  command -v bun >/dev/null || { echo '!!! bun is not installed on this box'; exit 1; }
 
-  # Anything already on the port that is NOT us is a collision. nuc runs ~15 homelab apps
-  # and the ports are hand-allocated, so this is a real risk rather than a theoretical one.
-  holder=\$(sudo ss -ltnpH \"sport = :${PORT}\" 2>/dev/null | grep -o 'users:((\"[^\"]*\"' | head -1 | cut -d'\"' -f2 || true)
-  if [ -n \"\${holder:-}\" ] && [ \"\$holder\" != 'bun' ]; then
-    echo \"!!! port ${PORT} on \$(hostname) is held by '\$holder', not this harness.\"
-    echo \"    Pick another with MERCHANT_DEPLOY_PORT=8790 bun run deploy\"
-    exit 1
+  # Resolve bun rather than assume where it lives. The unit has to name an absolute path —
+  # systemd does not search PATH — and guessing wrong gives a service that installs cleanly
+  # and then refuses to start. It is /usr/local/bin/bun on the diary boxes and
+  # ~/.bun/bin/bun on the dev machine, so it is genuinely not a constant.
+  BUN=\$(command -v bun || true)
+  if [ -z \"\$BUN\" ]; then echo '!!! bun is not on PATH on this box'; exit 1; fi
+  echo \"--> bun at \$BUN\"
+
+  # Is anything already on the port? No sudo: ss without privileges still reports the port
+  # as occupied, and 'is it ours' is answered by systemd rather than by parsing process
+  # names. The earlier version asked sudo for the process name, and when sudo needed a
+  # password it returned nothing and read as 'port free' — a false clear, which is the one
+  # answer a preflight must never give.
+  if ss -ltnH \"sport = :${PORT}\" 2>/dev/null | grep -q .; then
+    if ! systemctl is-active --quiet ${SERVICE} 2>/dev/null; then
+      echo \"!!! port ${PORT} on \$(hostname) is in use by something that is not this harness.\"
+      echo '    sudo ss -ltnp | grep :${PORT}     # to see what'
+      echo '    MERCHANT_DEPLOY_PORT=8790 bun run deploy   # or move out of its way'
+      exit 1
+    fi
   fi
 
   sudo mkdir -p '${APP}/data' /var/log/${SERVICE}
   sudo chown -R \$(id -un):\$(id -gn) '${APP}' /var/log/${SERVICE}
-" </dev/null
+"
 
 # --- push ------------------------------------------------------------------------------
 
@@ -139,11 +151,15 @@ ssh -t "$TARGET" "
     | sudo tee '${ENV_FILE}' >/dev/null
 
   echo '--> Service'
-  sudo cp deploy/${SERVICE}.service /etc/systemd/system/${SERVICE}.service
+  # ExecStart is rewritten with the bun this box actually has. The committed unit carries the
+  # common path as documentation; the installed one carries the true one.
+  BUN=\$(command -v bun)
+  sed \"s|^ExecStart=.*|ExecStart=\$BUN server/index.js|\" deploy/${SERVICE}.service \
+    | sudo tee /etc/systemd/system/${SERVICE}.service >/dev/null
   sudo systemctl daemon-reload
   sudo systemctl enable ${SERVICE} >/dev/null 2>&1 || true
   sudo systemctl restart ${SERVICE}
-" </dev/null
+"
 
 # --- prove it -------------------------------------------------------------------------
 #
@@ -152,10 +168,18 @@ ssh -t "$TARGET" "
 
 say "Health check"
 sleep 3
-if ssh "$TARGET" "curl -fsS -o /dev/null -m 10 http://127.0.0.1:${PORT}/api/harness/dataset"; then
-  DATASET=$(ssh "$TARGET" "curl -fsS -m 10 http://127.0.0.1:${PORT}/api/harness/dataset")
-  echo "    dataset  $(echo "$DATASET" | grep -o '\"dbPath\":\"[^\"]*\"' | cut -d'\"' -f4)"
-  echo "    products $(echo "$DATASET" | grep -o '\"product\":[0-9]*' | cut -d: -f2)"
+if DATASET=$(ssh "$TARGET" "curl -fsS -m 10 http://127.0.0.1:${PORT}/api/harness/dataset"); then
+  # Parsed with bun rather than grep+cut. The shell version needed escaped quotes inside a
+  # command substitution inside a double-quoted string, which silently produced an empty
+  # dataset line and a `cut: the delimiter must be a single character` on a deploy that had
+  # otherwise worked perfectly.
+  echo "$DATASET" | bun -e '
+    const d = JSON.parse(await Bun.stdin.text());
+    console.log(`    dataset  ${d.dbPath}`);
+    console.log(`    source   ${d.dbSource ?? "?"}`);
+    const c = d.counts ?? {};
+    console.log(`    data     ${c.branch ?? "?"} branches · ${(c.product ?? 0).toLocaleString("en-GB")} products · ${(c.customer ?? 0).toLocaleString("en-GB")} customers`);
+  ' 2>/dev/null || echo "    (served, but the dataset endpoint did not parse)"
   HOST=${TARGET#*@}
   say "OK — harness answering on ${HOST}:${PORT}"
   echo "    From another device on the network:  http://${HOST}:${PORT}/"
