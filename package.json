@@ -17,7 +17,8 @@
     "explain": "bun run scripts/explain.js",
     "check": "bun run scripts/check-client.js",
     "test": "bun test",
-    "features": "bun run scripts/features.js"
+    "features": "bun run scripts/features.js",
+    "deploy": "bash deploy/deploy.sh"
   },
   "dependencies": {
     "hono": "^4.6.0",

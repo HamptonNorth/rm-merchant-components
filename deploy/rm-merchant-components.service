@@ -1,0 +1,43 @@
+# systemd unit for the rm-merchant-components harness on nuc2023.
+#
+# Runs as rcollins from /opt/rm-merchant-components, matching how aph2-website runs on the
+# same box. Per-environment values (PORT, MERCHANT_DB_PATH) live in the EnvironmentFile,
+# not here, so this file is identical wherever it is installed.
+#
+# Installed and refreshed by deploy/deploy.sh — you should not need to copy it by hand.
+
+[Unit]
+Description=rm-merchant-components development harness (Bun)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rcollins
+Group=rcollins
+WorkingDirectory=/opt/rm-merchant-components
+EnvironmentFile=/etc/rm-merchant-components.env
+ExecStart=/usr/local/bin/bun server/index.js
+Restart=on-failure
+RestartSec=2s
+StartLimitIntervalSec=300
+StartLimitBurst=5
+StandardOutput=append:/var/log/rm-merchant-components/stdout.log
+StandardError=append:/var/log/rm-merchant-components/stderr.log
+
+# Hardening. This service is unusually easy to lock down because **it never writes**: the
+# dataset is opened `{ readonly: true }` and every route is a GET. So ProtectSystem=strict
+# needs no ReadWritePaths for the app itself — only the log directory.
+#
+# If a component ever gains a write path (an order basket, a saved quote), this is the file
+# that will refuse it with a confusing "read-only file system", and the fix is to add the
+# directory here rather than to loosen the whole unit.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log/rm-merchant-components
+PrivateTmp=true
+PrivateDevices=true
+
+[Install]
+WantedBy=multi-user.target
