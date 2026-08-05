@@ -16,7 +16,8 @@
     "css:watch": "bun run scripts/build-css.js --watch",
     "explain": "bun run scripts/explain.js",
     "check": "bun run scripts/check-client.js",
-    "test": "bun test"
+    "test": "bun test",
+    "features": "bun run scripts/features.js"
   },
   "dependencies": {
     "hono": "^4.6.0",

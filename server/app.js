@@ -14,6 +14,7 @@ import { delivery } from "./routes/delivery.js";
 import { products } from "./routes/products.js";
 import { userPermissions } from "./routes/permissions.js";
 import { harness } from "./routes/harness.js";
+import { demo } from "./routes/demo.js";
 import { dbPath, isDev } from "./db.js";
 
 export const app = new Hono();
@@ -27,6 +28,7 @@ api.route("/products", products);
 api.route("/app-users", appUsers);
 api.route("/app-users", userPermissions);
 api.route("/harness", harness);
+api.route("/demo", demo);
 api.get("/", (c) => c.json({ name: "rm-merchant-components", dbPath, dev: isDev }));
 
 app.route("/api", api);
@@ -57,6 +59,9 @@ async function page(c) {
   if (path.startsWith("/f/")) {
     return (await file("./client/flow.html", "text/html; charset=utf-8")) ?? built(c);
   }
+  if (path === "/features") {
+    return (await file("./client/features.html", "text/html; charset=utf-8")) ?? built(c);
+  }
   return c.text("Not found", 404);
 }
 
@@ -67,3 +72,4 @@ function built(c) {
 app.get("/", page);
 app.get("/c/:id", page);
 app.get("/f/:id", page);
+app.get("/features", page);

@@ -83,6 +83,19 @@ class HarnessComponent extends LitElement {
       this.ctor = Object.values(mod).find((v) => typeof v === "function" && v.harnessSchema);
       this.schema = this.ctor?.harnessSchema ?? [];
       this.props = Object.fromEntries(this.schema.map((f) => [f.name, f.default]));
+      // ?props={"customerId":123} — how the feature finder opens a component already in the
+      // state being asked about, rather than leaving an id to be typed in by hand.
+      const raw = new URLSearchParams(location.search).get("props");
+      if (raw) {
+        try {
+          const incoming = JSON.parse(raw);
+          for (const [k, v] of Object.entries(incoming)) {
+            if (k in this.props) this.props[k] = v;
+          }
+        } catch (err) {
+          this.loadError = `Bad ?props= in the URL — ${err.message}`;
+        }
+      }
       this.buildElement();
     } catch (err) {
       this.loadError = `Failed to load ${this.meta.module} — ${err.message}`;

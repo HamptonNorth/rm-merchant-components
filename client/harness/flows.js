@@ -73,6 +73,22 @@ export const flows = [
         },
       },
       {
+        component: "product-detail",
+        note: "Price it — which band, and can this branch supply it?",
+        needs: ["productId"],
+        // Reads the branch as well as the product: the same line is a different answer at a
+        // different yard, and the card leads with that rather than burying it.
+        props: (ctx) => ({ productId: ctx.productId, workingBranchId: ctx.workingBranchId }),
+        emits: {
+          "merchant-product-price-selected": (d) => ({
+            priceTier: d.tier,
+            pricePence: d.pricePence,
+            priceUomId: d.uomId,
+            pricePer: d.per,
+          }),
+        },
+      },
+      {
         component: "delivery-address",
         note: "Where is it going? (skip for a collect)",
         needs: ["customerId"],

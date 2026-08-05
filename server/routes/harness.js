@@ -5,6 +5,7 @@
 
 import { Hono } from "hono";
 import { db, dbPath, dbSource, dbGeneratedAt, unusedLocalCopy } from "../db.js";
+import { listFeatures, featureEntities } from "../queries/features.js";
 
 export const harness = new Hono();
 
@@ -290,6 +291,63 @@ const SCENARIOS = [
                               order by count(*) desc limit 1`).get(),
     props: (row) => ({ workingBranchId: row.id, scope: "branch", collapseOnSelect: true, groupPath: "" }),
   },
+  // product-detail — the three pricing shapes, which is what the card has to get right.
+  {
+    id: "detail-two-units",
+    component: "product-detail",
+    label: "Priced two ways — per sheet and per 10m²",
+    // 266 products change unit between tiers. The card renders one block per unit rather than
+    // a tier x unit grid, because the band counts differ and a grid would have holes.
+    resolve: () => db.query(`select pp.product_id as id from product_price pp
+                              group by pp.product_id
+                             having count(distinct pp.unit_of_measure_id) > 1
+                              order by pp.product_id limit 1`).get(),
+    props: (row) => ({ productId: row.id, showCost: false, selectedTier: 0 }),
+  },
+  {
+    id: "detail-quantity-breaks",
+    component: "product-detail",
+    label: "Genuine quantity breaks — 17 products of 3,714",
+    // Everything else has degenerate scheme tiers (qty 1-1) and its prices are customer
+    // bands, so this is the only shape where a quantity column is truthful.
+    resolve: () => db.query(`select p.id from product p
+                              join price_break_tier t on t.price_break_id = p.price_break_id
+                             where t.qty_to > 1 and t.qty_to < 99999999
+                             group by p.id limit 1`).get(),
+    props: (row) => ({ productId: row.id, showCost: false, selectedTier: 0 }),
+  },
+  {
+    id: "detail-not-permitted",
+    component: "product-detail",
+    label: "A line this branch may not sell",
+    resolve: () => db.query(`select product_id as id, branch_id from product_branch
+                             where status = 'not_permitted' limit 1`).get(),
+    props: (row) => ({ productId: row.id, workingBranchId: row.branch_id, showCost: false }),
+  },
+  {
+    id: "detail-not-ranged-here",
+    component: "product-detail",
+    label: "Not ranged here — who else has it",
+    resolve: () => db.query(`select p.id, (select branch_id from product_branch
+                                            where product_id = p.id limit 1) as anywhere,
+                                    (select b.id from branch b where b.branch_type='trading'
+                                      and not exists (select 1 from product_branch
+                                                       where product_id = p.id and branch_id = b.id)
+                                      limit 1) as branch_id
+                               from product p
+                              where (select count(*) from product_branch where product_id = p.id) between 3 and 20
+                              limit 1`).get(),
+    props: (row) => ({ productId: row.id, workingBranchId: row.branch_id, showCost: false }),
+  },
+  {
+    id: "detail-with-cost",
+    component: "product-detail",
+    label: "With cost and margin shown",
+    // Off by default because counter staff generally may not see cost, and there is no
+    // view_cost permission in the dataset to gate it on.
+    resolve: () => db.query(`select id from product where last_cost_pence > 0 order by id limit 1`).get(),
+    props: (row) => ({ productId: row.id, showCost: true }),
+  },
   {
     id: "product-thin-range",
     component: "find-product",
@@ -573,6 +631,20 @@ harness.get("/scenarios", (c) => {
     };
   });
   return c.json({ rows, total: rows.length });
+});
+
+// "Which record demonstrates X?" — the crib list, as a query. See queries/features.js for
+// why it is not a document.
+harness.get("/features", (c) => {
+  const r = listFeatures({
+    q: c.req.query("q") ?? "",
+    entity: c.req.query("entity") ?? "",
+    // Lets the page preview what the outward-facing catalogue would show. The real demo
+    // door is /api/demo/features, which cannot be talked out of filtering.
+    audience: c.req.query("audience") === "demo" ? "demo" : "",
+    limit: Math.min(Number(c.req.query("limit") ?? 5) || 5, 25),
+  });
+  return c.json({ ...r, entities: featureEntities() });
 });
 
 harness.get("/dataset", (c) => {

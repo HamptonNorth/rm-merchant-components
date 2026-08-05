@@ -21,59 +21,13 @@
 import { html, css, nothing } from "lit";
 import { MerchantElement } from "../shared/merchant-element.js";
 import { fmtPence } from "../shared/format.js";
+import { AVAILABILITY, perLabel } from "../shared/availability.js";
 
 const SCOPES = ["branch", "all"];
 
 const SCOPE_LABEL = {
   branch: "this branch's range",
   all: "the whole catalogue",
-};
-
-// Colour carries the meaning here, so it is defined once rather than inline per branch of a
-// template. Green reads as "yes, now"; amber as "yes, but not from this yard"; red as "no".
-const AVAILABILITY = {
-  held: {
-    label: "In range",
-    hint: "Carried at this branch",
-    classes: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
-  },
-  to_order: {
-    label: "To order",
-    hint: "Sold here, obtained per order",
-    classes: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200",
-  },
-  elsewhere: {
-    label: "Other branches",
-    hint: "Not ranged here, carried elsewhere in the network",
-    classes: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200",
-  },
-  special_order: {
-    label: "Special order",
-    hint: "Ranged nowhere — orderable from the supplier",
-    classes: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
-  },
-  blocked: {
-    label: "Not permitted",
-    hint: "This branch may not sell this line",
-    classes: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200",
-  },
-};
-
-// "10m2" is how the unit-of-measure table spells it; nobody writes it that way on a quote.
-const PER_LABEL = {
-  "10m2": "per 10m²",
-  m2: "per m²",
-  m3: "per m³",
-  "cu ft": "per cu ft",
-  mtr: "per metre",
-  "100 mtr": "per 100m",
-  each: "each",
-  pair: "per pair",
-  litre: "per litre",
-  kg: "per kg",
-  dozen: "per dozen",
-  pallet: "per pallet",
-  pack: "per pack",
 };
 
 export class MerchantFindProduct extends MerchantElement {
@@ -395,7 +349,7 @@ export class MerchantFindProduct extends MerchantElement {
   // Distribution" parses as a conjunction rather than a footnote.
   renderPrice(row) {
     if (row.price_pence === null || row.price_pence === undefined) return nothing;
-    const per = PER_LABEL[row.price_per] ?? (row.price_per ? `per ${row.price_per}` : "");
+    const per = perLabel(row.price_per);
     return html`<span class="whitespace-nowrap">
       <span class="font-medium text-slate-900 tabular-nums dark:text-slate-100"
         >${fmtPence(row.price_pence)}</span

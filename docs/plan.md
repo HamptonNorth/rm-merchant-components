@@ -140,6 +140,7 @@ rm-merchant-components/
 │  └─ queries/                   ← one SQL module per concern, no ORM
 ├─ client/
 │  ├─ index.html                 ← harness index (component catalogue)
+│  ├─ features.html              ← feature finder: which record demonstrates what
 │  ├─ component.html             ← harness component page (one per component, ?id=)
 │  ├─ harness/                   ← the dev harness shell (see §6)
 │  └─ styles/
@@ -886,11 +887,19 @@ Each entry: what it does · key data · what it emits.
    `product_price`, `unit_of_measure` ·
    `merchant-product-selected { product, availability, branchId, scope }`.
 
-6. **Show details for product** `v0.1.0` — full card: identity and barcodes, group
-   breadcrumb from the materialised path, dimensions/weight, pack quantities, the price
-   tier matrix per UOM with quantity breaks, tax rate, default supplier, margins. · `product`,
-   `product_price`, `price_break(_tier)`, `unit_of_measure`, `tax_rate`, `product_group`,
-   `supplier` · `merchant-product-price-selected { productId, tier, uomId, pricePence }`.
+6. **Show details for product** `v0.1.0` *(built)* — full card led by **availability at this
+   branch**, then price bands grouped per UOM, dimensions, packaging, barcodes, supply and
+   parsed specification. `tier` turned out **not** to be a quantity break: 3,697 of 3,714
+   products sit on a scheme whose tiers are degenerate (`qty 1-1`) and whose prices simply
+   descend, which is a customer price band. Only 17 lines carry genuine ranges, so a quantity
+   column appears only where the scheme defines one — otherwise the card would print
+   "qty 1-1" against 99.5% of the catalogue. Prices group per UOM rather than as a
+   tier x UOM grid, because the 266 two-unit products have differing band counts and a grid
+   would imply prices that do not exist. Cost/margin behind `showCost`, defaulting off and
+   flagged as ungated — there is no `view_cost` permission to gate it on. · `product`,
+   `product_branch`, `product_price`, `price_break(_tier)`, `unit_of_measure`, `tax_rate`,
+   `product_group`, `supplier` ·
+   `merchant-product-price-selected { productId, tier, uomId, per, pricePence, qtyFrom, qtyTo }`.
 
 7. **Stock check for product** `v0.1.0` *(blocked → fixture)* — for one product at one
    branch: on hand, allocated, free, on order with ETA, bin location, reorder levels,

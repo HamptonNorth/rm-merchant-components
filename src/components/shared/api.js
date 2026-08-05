@@ -84,6 +84,11 @@ export function createApi({ base = "" } = {}) {
     listProductSuppliers: ({ branchId } = {}) => get("/api/products/suppliers", { branch: branchId }),
     getRangeSummary: ({ branchId } = {}) => get("/api/products/range-summary", { branch: branchId }),
 
+    // The full card for one product, as seen from a branch — identity, price bands per unit,
+    // dimensions, supply, and whether this branch may sell it.
+    getProductDetail: ({ productId, branchId } = {}) =>
+      get(`/api/products/${productId}`, { branch: branchId }),
+
     // What a quantity input needs: unit-of-measure config, price tiers, tally lengths.
     getQtyConfig: ({ productId } = {}) => get(`/api/products/${productId}/qty-config`),
     listTallies: () => get("/api/products/tallies"),

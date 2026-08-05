@@ -117,13 +117,14 @@ export const components = [
     tag: "merchant-product-detail",
     title: "Show product details",
     version: "0.1.0",
-    status: "planned",
+    status: "ready",
     phase: 2,
     group: "Product",
     description:
-      "Full product card including the price tier matrix per unit of measure, quantity breaks, dimensions and default supplier.",
-    dataDeps: ["product", "product_price", "price_break_tier", "unit_of_measure", "tax_rate"],
-    events: ["merchant-product-price-selected"],
+      "One line in full, as seen from a branch: price bands per unit of measure, dimensions, packaging, barcodes and supply \u2014 led by whether this branch may sell it at all. Quantity ranges appear only where the pricing scheme defines them, which is 17 products of 3,714; for the rest the tiers are customer price bands and are labelled as such.",
+    dataDeps: ["product", "product_branch", "product_price", "price_break", "price_break_tier", "unit_of_measure", "tax_rate", "product_group", "supplier", "tally"],
+    module: "/src/components/product-detail/product-detail.js",
+    events: ["merchant-product-price-selected", "merchant-product-detail-loaded"],
   },
   {
     id: "find-product",

@@ -92,6 +92,14 @@ class HarnessIndex extends LitElement {
           ? html`
               <div class="mb-8 rounded-lg border border-slate-200 bg-white p-3 text-xs dark:border-slate-800 dark:bg-slate-900">
                 <p class="font-mono text-slate-500 dark:text-slate-400">${ds.dbPath}</p>
+                <p class="mt-1">
+                  <a href="/features" class="font-medium text-sky-700 hover:underline dark:text-sky-300"
+                    >Feature finder →</a
+                  >
+                  <span class="text-slate-500 dark:text-slate-400"
+                    >which customer or product demonstrates a given feature</span
+                  >
+                </p>
                 ${ds.generatedAt
                   ? html`<p class="text-slate-500 dark:text-slate-400">
                       generated ${new Date(ds.generatedAt).toLocaleString("en-GB")} · via ${ds.dbSource}

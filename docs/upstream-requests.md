@@ -391,6 +391,38 @@ a materialised path (`Top.Timber.Joinery.Sawn`), so subtree faceting needs nothi
 
 ---
 
+## 2e. A `view_cost` permission, and what `tier` actually means
+
+**Status:** neither blocking. Both found while building `product-detail`.
+
+**No permission covers seeing cost or margin.** The 15 permissions cover sales, credit,
+purchasing, stock and works orders. `product-detail` therefore puts cost behind a `showCost`
+prop that defaults off and says on screen that it is ungated. `override_selling_prices` is
+not a substitute — that governs *changing* a price, not *seeing* what it cost. Counter staff
+generally may not see cost; sales desk and managers may.
+
+**`product_price.tier` means two different things depending on the product's scheme**, and
+the schema does not say which:
+
+| | products | `tier` is |
+|---|---:|---|
+| degenerate scheme, `qty_from = qty_to = 1` | 3,697 | a customer price band (prices simply descend) |
+| "Cement and bagged binders" | 17 | a genuine quantity break, 1-9 / 10-25 / 26-50 / 51-9999 |
+| "Kronospan decorative sheets" | 0 | real ranges defined, no product uses them |
+
+Consumers must test the scheme before rendering a tier as a quantity, or they will print
+"qty 1-1" against 99.5% of the catalogue. Two smaller inconsistencies alongside it: **464
+products carry more price rows than their scheme has tiers** (the 17 quantity-break lines all
+have 6 prices against a 4-tier scheme), and **no customer carries a price band**, so nothing
+connects a customer to the tier they should be charged at — which is the obvious next step
+for a counter system.
+
+Also worth knowing for any consumer: **`unit_of_measure.description` is internal
+configuration guidance**, not a display label. It reads "Use for unit products. Qty x price
+with divisor of 1", and rendering it produces "Weight: 2.38 Use for unit products…".
+
+---
+
 ## 3. Stock, sourcing and inter-branch supply
 
 **→ Full spec: [`requirements-stock-sourcing.md`](requirements-stock-sourcing.md)**

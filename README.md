@@ -37,6 +37,52 @@ MERCHANT_DB_PATH=/path/to/datagenerator.db bun run dev
 A copy in `./data` that is not the file being read is reported at startup and on the
 harness index, because it is either already out of date or one regeneration away from it.
 
+## Finding test data
+
+"Which customer has more than two delivery addresses?" is asked of the dataset rather than
+kept in a list, because **ids move with the seed** — a hardcoded branch id in a component's
+harness defaults pointed at Leeds when written and at Cambridge after a regeneration, with
+nothing to say so.
+
+```bash
+bun run features                 # every feature, with counts
+bun run features delivery        # anything matching
+bun run features gap             # what this dataset cannot demonstrate
+```
+
+Or `/features` in the harness, where each example links straight through to the component
+already in that state. Each entry says how many exist, names a few, and explains what it is
+for. **A count of zero is a result** — the "Known gaps" section lists things that *should* be
+demonstrable and are not, so the same discovery is not made twice.
+
+New probes go in [`server/queries/features.js`](server/queries/features.js): one SQL
+returning `id | label | detail | count(*) over () as total`.
+
+### Two audiences
+
+The same catalogue serves a second purpose — walking a prospect through a "does it support
+X?" evaluation on real data. That makes the split load-bearing, because the internal view
+includes a **Known gaps** section listing what this system cannot yet do.
+
+`audience` is an **allowlist**. A probe with no `audience` is internal, so forgetting to mark
+a new one hides a demo rather than publishing a weakness.
+
+| | Internal | Demo |
+|---|---|---|
+| Route | `/api/harness/features` | `/api/demo/features` |
+| Function | `listFeatures()` | `listDemoFeatures()` |
+| Shows gaps | yes, deliberately | never |
+| Wording | schema terms (`non_stock`) | trade terms ("sold but not held") |
+| Extras | timings, entity facets | none |
+
+The demo route only ever calls `listDemoFeatures()` and takes no audience parameter, so it
+cannot be talked into showing more — the protection is structural rather than a flag someone
+has to remember. Tests assert no gap is demo-visible, that unmarked probes are internal, and
+that no demo entry uses schema vocabulary.
+
+`bun run features --demo`, or the "As a prospect sees it" toggle on `/features`, previews
+exactly what the outward-facing catalogue would show, in its wording.
+
 ## Scripts
 
 | Script | Does |
@@ -47,6 +93,7 @@ harness index, because it is either already out of date or one regeneration away
 | `bun run vendor` | Bundle the installed Lit to `client/vendor/lit.js` |
 | `bun run check` | Bundle every client entry point to catch bad imports and syntax errors |
 | `bun run explain` | Time a query and test candidate indexes on a scratch DB copy |
+| `bun run features [term]` | Which customer/product/branch demonstrates a given feature |
 
 If the port is busy the server names the process holding it and prints the command to free
 it. `PORT=8789 bun run dev` moves it instead. One warning it repeats, because it has cost
