@@ -6,6 +6,10 @@
 #   bun run deploy              source + dataset if it changed, then restart
 #   bun run deploy --no-db      skip the 137 MB dataset (source-only, much faster)
 #   bun run deploy --db-only    push just the dataset after a regeneration
+#   bun run deploy --seal       also convert the dataset to journal_mode=delete. Only for a
+#                               genuinely read-only volume — it is undone by the first GUI
+#                               tool that reopens the file in WAL, and WAL is what lets a
+#                               console edit the dataset while the harness is serving.
 #
 # Run FROM the dev machine. This differs from aph2-diary's update-diary.sh, which runs on
 # the target and pulls from git — and it differs for one reason: **the dataset is not in
@@ -28,10 +32,12 @@ REMOTE_DB="${APP}/data/datagenerator.db"
 
 WITH_DB=1
 WITH_SOURCE=1
+SEAL=0
 for arg in "$@"; do
   case "$arg" in
     --no-db)   WITH_DB=0 ;;
     --db-only) WITH_SOURCE=0 ;;
+    --seal)    SEAL=1 ;;
     -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
@@ -101,6 +107,13 @@ ssh -t "$TARGET" "
 
   sudo mkdir -p '${APP}/data' /var/log/${SERVICE}
   sudo chown -R \$(id -un):\$(id -gn) '${APP}' /var/log/${SERVICE}
+
+  # Stop before anything is replaced underneath it. A failing unit restarts on a timer and
+  # keeps the dataset open, which is what turned a seal into SQLITE_BUSY; and swapping a
+  # 137 MB file under a live reader is a hazard in its own right.
+  if systemctl list-unit-files ${SERVICE}.service >/dev/null 2>&1; then
+    sudo systemctl stop ${SERVICE} 2>/dev/null || true
+  fi
 "
 
 # --- push ------------------------------------------------------------------------------
@@ -137,6 +150,14 @@ fi
 
 # --- install, build, restart -----------------------------------------------------------
 
+SEAL_STEP=""
+if [[ $SEAL == 1 ]]; then
+  SEAL_STEP="  echo '--> Sealing dataset (journal_mode=delete)'
+  bun run scripts/seal-dataset.js '${REMOTE_DB}'
+
+"
+fi
+
 say "Installing and restarting"
 ssh -t "$TARGET" "
   set -euo pipefail
@@ -150,13 +171,7 @@ ssh -t "$TARGET" "
   # from the rsync, so it is built here rather than shipped.
   bun run build >/dev/null
 
-  echo '--> Sealing dataset for read-only serving'
-  # WAL needs to create a -shm sidecar even for a readonly connection, and the unit makes
-  # /opt read-only on purpose. Converting to journal_mode=delete leaves one self-contained
-  # file. Idempotent, and it verifies a readonly open before letting the deploy continue.
-  bun run scripts/seal-dataset.js '${REMOTE_DB}'
-
-  echo '--> Environment'
+${SEAL_STEP}  echo '--> Environment'
   # MERCHANT_DB_PATH is set explicitly even though db.js would find ./data/datagenerator.db
   # by its own fourth rule. Explicit means the startup banner names it, so a wrong dataset
   # is visible in the logs rather than inferred.
@@ -176,7 +191,7 @@ ssh -t "$TARGET" "
     | sudo tee /etc/systemd/system/${SERVICE}.service >/dev/null
   sudo systemctl daemon-reload
   sudo systemctl enable ${SERVICE} >/dev/null 2>&1 || true
-  sudo systemctl restart ${SERVICE}
+  sudo systemctl start ${SERVICE}
 "
 
 # --- prove it -------------------------------------------------------------------------

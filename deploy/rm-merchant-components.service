@@ -25,24 +25,28 @@ StartLimitBurst=5
 StandardOutput=append:/var/log/rm-merchant-components/stdout.log
 StandardError=append:/var/log/rm-merchant-components/stderr.log
 
-# Hardening. This service is unusually easy to lock down because **it never writes**: the
-# dataset is opened `{ readonly: true }` and every route is a GET. So ProtectSystem=strict
-# needs no ReadWritePaths for the app itself — only the log directory.
+# Hardening, with one deliberate hole.
 #
-# That is only true because deploy.sh seals the dataset first. datagenerator2 leaves it in
-# WAL journal mode, and a WAL reader creates a `-shm` sidecar even on a readonly connection,
-# so with /opt read-only the very first query fails with SQLITE_READONLY_DIRECTORY —
-# "attempt to write a readonly database" on a process that is doing nothing of the kind.
-# scripts/seal-dataset.js converts it to journal_mode=delete, which needs no sidecars.
-# If you ever place a dataset here by hand, seal it too: `bun run seal <path>`.
+# The app itself never writes: the dataset is opened `{ readonly: true }` and every route is
+# a GET. That guard is enforced by SQLite on the connection, which is stronger than a
+# filesystem permission — it holds however the directory is owned.
 #
-# If a component ever gains a write path (an order basket, a saved quote), this is the file
-# that will refuse it with a confusing "read-only file system", and the fix is to add the
-# directory here rather than to loosen the whole unit.
+# The data directory is nonetheless writable, because the dataset stays in WAL journal mode
+# and a WAL reader must create a `-shm` sidecar even on a readonly connection. WAL is kept
+# on purpose: this is an internal box, and the dataset is expected to be edited with a SQLite
+# console while the harness is serving. That is exactly the workload WAL is for — readers and
+# writers do not block each other — and converting to journal_mode=delete to satisfy a
+# read-only /opt would be undone by the first GUI tool that reopens the file in WAL.
+#
+# So /opt stays read-only for the code, and only data/ and the logs are writable.
+#
+# If a component ever gains a write path of its own (an order basket, a saved quote), it will
+# fail here with a confusing "read-only file system", and the fix is to add that directory
+# rather than to loosen the whole unit.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/log/rm-merchant-components
+ReadWritePaths=/opt/rm-merchant-components/data /var/log/rm-merchant-components
 PrivateTmp=true
 PrivateDevices=true
 
