@@ -29,6 +29,13 @@ StandardError=append:/var/log/rm-merchant-components/stderr.log
 # dataset is opened `{ readonly: true }` and every route is a GET. So ProtectSystem=strict
 # needs no ReadWritePaths for the app itself — only the log directory.
 #
+# That is only true because deploy.sh seals the dataset first. datagenerator2 leaves it in
+# WAL journal mode, and a WAL reader creates a `-shm` sidecar even on a readonly connection,
+# so with /opt read-only the very first query fails with SQLITE_READONLY_DIRECTORY —
+# "attempt to write a readonly database" on a process that is doing nothing of the kind.
+# scripts/seal-dataset.js converts it to journal_mode=delete, which needs no sidecars.
+# If you ever place a dataset here by hand, seal it too: `bun run seal <path>`.
+#
 # If a component ever gains a write path (an order basket, a saved quote), this is the file
 # that will refuse it with a confusing "read-only file system", and the fix is to add the
 # directory here rather than to loosen the whole unit.

@@ -111,6 +111,14 @@ Pre-flight runs the tests and `bun run check` locally and refuses to deploy if e
 it also refuses if the port is held on the target by anything other than this harness, since
 nuc runs ~15 hand-allocated homelab services.
 
+**The dataset is sealed on arrival.** datagenerator2 writes it in WAL journal mode, and a
+WAL reader creates a `-shm` sidecar *even on a readonly connection* — so serving it from the
+unit's read-only `/opt` fails with `SQLITE_READONLY_DIRECTORY: attempt to write a readonly
+database`, on a process that never writes. `scripts/seal-dataset.js` converts it to
+`journal_mode=delete`, leaving one self-contained file, and verifies a readonly open before
+the deploy proceeds. Run `bun run seal <path>` by hand if you ever place a dataset somewhere
+without deploying.
+
 **`NODE_ENV` is deliberately left unset on the target.** `isDev` gates the query plans,
 timings and plan warnings in every API envelope — deploying in production mode would ship
 the harness with its instruments removed.
@@ -127,6 +135,7 @@ the harness with its instruments removed.
 | `bun run explain` | Time a query and test candidate indexes on a scratch DB copy |
 | `bun run features [term]` | Which customer/product/branch demonstrates a given feature |
 | `bun run deploy` | Push harness + dataset to the test box and restart it |
+| `bun run seal <path>` | Convert a dataset to `journal_mode=delete` so it serves read-only |
 
 If the port is busy the server names the process holding it and prints the command to free
 it. `PORT=8789 bun run dev` moves it instead. One warning it repeats, because it has cost

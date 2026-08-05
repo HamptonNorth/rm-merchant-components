@@ -18,7 +18,8 @@
     "check": "bun run scripts/check-client.js",
     "test": "bun test",
     "features": "bun run scripts/features.js",
-    "deploy": "bash deploy/deploy.sh"
+    "deploy": "bash deploy/deploy.sh",
+    "seal": "bun run scripts/seal-dataset.js"
   },
   "dependencies": {
     "hono": "^4.6.0",

@@ -125,6 +125,14 @@ if [[ $WITH_DB == 1 ]]; then
   # similar size, and rsync's default heuristic would still send it; the delta algorithm is
   # what makes a re-push of a mostly-unchanged dataset quick.
   rsync -az --info=progress2 -c "$LOCAL_DB" "$TARGET:$REMOTE_DB"
+
+  # The dataset is written in WAL mode, so anything not yet checkpointed lives in the -wal
+  # sidecar rather than in the file just sent. Usually it is empty; sending it when it is not
+  # means the seal step below folds it in rather than silently dropping it.
+  if [[ -s "${LOCAL_DB}-wal" ]]; then
+    step "Carrying $(du -h "${LOCAL_DB}-wal" | cut -f1) of un-checkpointed WAL"
+    rsync -az "${LOCAL_DB}-wal" "$TARGET:${REMOTE_DB}-wal"
+  fi
 fi
 
 # --- install, build, restart -----------------------------------------------------------
@@ -141,6 +149,12 @@ ssh -t "$TARGET" "
   # Generated output (Tailwind CSS + the vendored Lit bundle) is gitignored and excluded
   # from the rsync, so it is built here rather than shipped.
   bun run build >/dev/null
+
+  echo '--> Sealing dataset for read-only serving'
+  # WAL needs to create a -shm sidecar even for a readonly connection, and the unit makes
+  # /opt read-only on purpose. Converting to journal_mode=delete leaves one self-contained
+  # file. Idempotent, and it verifies a readonly open before letting the deploy continue.
+  bun run scripts/seal-dataset.js '${REMOTE_DB}'
 
   echo '--> Environment'
   # MERCHANT_DB_PATH is set explicitly even though db.js would find ./data/datagenerator.db
